@@ -14,6 +14,7 @@ from pandas.core.index import Index, MultiIndex
 from pandas.core.frame import DataFrame
 import datetime
 import pandas.core.common as com
+from pandas.core.common import AbstractMethodError
 from pandas.core.config import get_option
 from pandas.io.date_converters import generic_parser
 from pandas.io.common import get_filepath_or_buffer
@@ -55,8 +56,11 @@ escapechar : string (length 1), default None
 dtype : Type name or dict of column -> type
     Data type for data or columns. E.g. {'a': np.float64, 'b': np.int32}
     (Unsupported with engine='python')
-compression : {'gzip', 'bz2', None}, default None
-    For on-the-fly decompression of on-disk data
+compression : {'gzip', 'bz2', 'infer', None}, default 'infer'
+    For on-the-fly decompression of on-disk data. If 'infer', then use gzip or
+    bz2 if filepath_or_buffer is a string ending in '.gz' or '.bz2',
+    respectively, and no decompression otherwise. Set to None for no
+    decompression.
 dialect : string or csv.Dialect instance, default None
     If None defaults to Excel dialect. Ignored if sep longer than 1 char
     See csv.Dialect documentation for more details
@@ -82,7 +86,7 @@ names : array-like
     should explicitly pass header=None
 prefix : string, default None
     Prefix to add to column numbers when no header, e.g 'X' for X0, X1, ...
-na_values : list-like or dict, default None
+na_values : str, list-like or dict, default None
     Additional strings to recognize as NA/NaN. If dict passed, specific
     per-column NA values
 true_values : list
@@ -294,7 +298,7 @@ _parser_defaults = {
     'verbose': False,
     'encoding': None,
     'squeeze': False,
-    'compression': None,
+    'compression': 'infer',
     'mangle_dupe_cols': True,
     'tupleize_cols': False,
     'infer_datetime_format': False,
@@ -334,7 +338,7 @@ def _make_parser_function(name, sep=','):
     def parser_f(filepath_or_buffer,
                  sep=sep,
                  dialect=None,
-                 compression=None,
+                 compression='infer',
 
                  doublequote=True,
                  escapechar=None,
@@ -652,6 +656,8 @@ class TextFileReader(object):
         # really delete this one
         keep_default_na = result.pop('keep_default_na')
 
+        if index_col is True:
+            raise ValueError("The value of index_col couldn't be 'True'")
         if _is_index_col(index_col):
             if not isinstance(index_col, (list, tuple, np.ndarray)):
                 index_col = [index_col]
@@ -705,7 +711,7 @@ class TextFileReader(object):
             self._engine = klass(self.f, **self.options)
 
     def _failover_to_python(self):
-        raise NotImplementedError
+        raise AbstractMethodError(self)
 
     def read(self, nrows=None):
         if nrows is not None:
@@ -1164,7 +1170,9 @@ class CParserWrapper(ParserBase):
             data = self._reader.read(nrows)
         except StopIteration:
             if nrows is None:
-                return None, self.names, {}
+                return _get_empty_meta(self.orig_names,
+                                       self.index_col,
+                                       self.index_names)
             else:
                 raise
 
@@ -1314,14 +1322,12 @@ def _wrap_compressed(f, compression, encoding=None):
     """
     compression = compression.lower()
     encoding = encoding or get_option('display.encoding')
+
     if compression == 'gzip':
         import gzip
 
         f = gzip.GzipFile(fileobj=f)
-        if compat.PY3_2:
-            # 3.2's gzip doesn't support read1
-            f = StringIO(f.read().decode(encoding))
-        elif compat.PY3:
+        if compat.PY3:
             from io import TextIOWrapper
 
             f = TextIOWrapper(f)
@@ -1385,6 +1391,17 @@ class PythonParser(ParserBase):
         self.thousands = kwds['thousands']
         self.comment = kwds['comment']
         self._comment_lines = []
+
+        if self.compression == 'infer':
+            if isinstance(f, compat.string_types):
+                if f.endswith('.gz'):
+                    self.compression = 'gzip'
+                elif f.endswith('.bz2'):
+                    self.compression = 'bz2'
+                else:
+                    self.compression = None
+            else:
+                self.compression = None
 
         if isinstance(f, compat.string_types):
             f = com._get_handle(f, 'r', encoding=self.encoding,
@@ -2039,18 +2056,20 @@ def _make_date_converter(date_parser=None, dayfirst=False,
                     infer_datetime_format=infer_datetime_format
                 )
             except:
-                return lib.try_parse_dates(strs, dayfirst=dayfirst)
+                return tools.to_datetime(
+                    lib.try_parse_dates(strs, dayfirst=dayfirst))
         else:
             try:
-                result = date_parser(*date_cols)
+                result = tools.to_datetime(date_parser(*date_cols))
                 if isinstance(result, datetime.datetime):
                     raise Exception('scalar parser')
                 return result
             except Exception:
                 try:
-                    return lib.try_parse_dates(_concat_date_cols(date_cols),
-                                               parser=date_parser,
-                                               dayfirst=dayfirst)
+                    return tools.to_datetime(
+                        lib.try_parse_dates(_concat_date_cols(date_cols),
+                                            parser=date_parser,
+                                            dayfirst=dayfirst))
                 except Exception:
                     return generic_parser(date_parser, *date_cols)
 
@@ -2204,13 +2223,14 @@ def _clean_index_names(columns, index_col):
 def _get_empty_meta(columns, index_col, index_names):
     columns = list(columns)
 
-    if index_col is not None:
-        index = MultiIndex.from_arrays([[]] * len(index_col),
-                                       names=index_names)
-        for n in index_col:
-            columns.pop(n)
-    else:
+    if index_col is None or index_col is False:
         index = Index([])
+    else:
+        index_col = list(index_col)
+        index = MultiIndex.from_arrays([[]] * len(index_col), names=index_names)
+        index_col.sort()
+        for i, n in enumerate(index_col):
+            columns.pop(n-i)
 
     return index, columns, {}
 

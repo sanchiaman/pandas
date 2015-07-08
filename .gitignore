@@ -41,6 +41,8 @@ doc/_build
 dist
 # Egg metadata
 *.egg-info
+.eggs
+
 # tox testing tool
 .tox
 # rope
@@ -55,7 +57,7 @@ dist
 ######################
 .directory
 .gdb_history
-.DS_Store?
+.DS_Store
 ehthumbs.db
 Icon?
 Thumbs.db

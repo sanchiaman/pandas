@@ -574,7 +574,7 @@ class TestMoments(Base):
                           fill_value=None):
 
         series_result = func(self.series, 50)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
 
         frame_result = func(self.frame, 50)
         self.assertEqual(type(frame_result), DataFrame)
@@ -782,7 +782,7 @@ class TestMoments(Base):
 
     def _check_ew_structures(self, func):
         series_result = func(self.series, com=10)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
         frame_result = func(self.frame, com=10)
         self.assertEqual(type(frame_result), DataFrame)
 
@@ -862,7 +862,7 @@ class TestMomentsConsistency(Base):
             if mock_mean:
                 # check that mean equals mock_mean
                 expected = mock_mean(x)
-                assert_equal(mean_x, expected)
+                assert_equal(mean_x, expected.astype('float64'))
 
             # check that correlation of a series with itself is either 1 or NaN
             corr_x_x = corr(x, x)
@@ -1254,7 +1254,8 @@ class TestMomentsConsistency(Base):
 
         actual = panel.ix[:, 1, 5]
         expected = func(self.frame[1], self.frame[5], *args, **kwargs)
-        tm.assert_series_equal(actual, expected)
+        tm.assert_series_equal(actual, expected, check_names=False)
+        self.assertEqual(actual.name, 5)
 
     def test_flex_binary_moment(self):
         # GH3155
@@ -1549,6 +1550,7 @@ class TestMomentsConsistency(Base):
         df1_expected = df1
         df1_expected_panel = Panel(items=df1.index, major_axis=df1.columns, minor_axis=df1.columns)
         df2 = DataFrame(columns=['a'])
+        df2['a'] = df2['a'].astype('float64')
         df2_expected = df2
         df2_expected_panel = Panel(items=df2.index, major_axis=df2.columns, minor_axis=df2.columns)
 
@@ -1842,7 +1844,7 @@ class TestMomentsConsistency(Base):
 
     def _check_expanding_structures(self, func):
         series_result = func(self.series)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
         frame_result = func(self.frame)
         self.assertEqual(type(frame_result), DataFrame)
 

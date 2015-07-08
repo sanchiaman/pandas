@@ -11,7 +11,7 @@ import pandas as pd
 from pandas import (Index, Series, DataFrame, Timestamp, Timedelta, TimedeltaIndex, isnull, notnull,
                     bdate_range, date_range, timedelta_range, Int64Index)
 import pandas.core.common as com
-from pandas.compat import StringIO, lrange, range, zip, u, OrderedDict, long, PY3_2
+from pandas.compat import StringIO, lrange, range, zip, u, OrderedDict, long
 from pandas import compat, to_timedelta, tslib
 from pandas.tseries.timedeltas import _coerce_scalar_to_timedelta_type as ct
 from pandas.util.testing import (assert_series_equal,
@@ -23,6 +23,8 @@ from pandas.tseries.offsets import Day, Second, Hour
 import pandas.util.testing as tm
 from numpy.random import rand, randn
 from pandas import _np_version_under1p8
+import pandas.compat as compat
+
 
 iNaT = tslib.iNaT
 
@@ -64,6 +66,13 @@ class TestTimedeltas(tm.TestCase):
         self.assertEqual(Timedelta(123072001000000).value, 123072001000000)
         self.assertTrue('1 days 10:11:12.001' in str(Timedelta(123072001000000)))
 
+        # string conversion with/without leading zero
+        # GH 9570
+        self.assertEqual(Timedelta('0:00:00'), timedelta(hours=0))
+        self.assertEqual(Timedelta('00:00:00'), timedelta(hours=0))
+        self.assertEqual(Timedelta('-1:00:00'), -timedelta(hours=1))
+        self.assertEqual(Timedelta('-01:00:00'), -timedelta(hours=1))
+
         # more strings
         # GH 8190
         self.assertEqual(Timedelta('1 h'), timedelta(hours=1))
@@ -99,6 +108,23 @@ class TestTimedeltas(tm.TestCase):
 
         # currently invalid as it has a - on the hhmmdd part (only allowed on the days)
         self.assertRaises(ValueError, lambda : Timedelta('-10 days -1 h 1.5m 1s 3us'))
+
+        # only leading neg signs are allowed
+        self.assertRaises(ValueError, lambda : Timedelta('10 days -1 h 1.5m 1s 3us'))
+
+        # no units specified
+        self.assertRaises(ValueError, lambda : Timedelta('3.1415'))
+
+        # invalid construction
+        tm.assertRaisesRegexp(ValueError,
+                              "cannot construct a TimeDelta",
+                              lambda : Timedelta())
+        tm.assertRaisesRegexp(ValueError,
+                              "unit abbreviation w/o a number",
+                              lambda : Timedelta('foo'))
+        tm.assertRaisesRegexp(ValueError,
+                              "cannot construct a TimeDelta from the passed arguments, allowed keywords are ",
+                              lambda : Timedelta(day=10))
 
         # roundtripping both for string and value
         for v in ['1s',
@@ -136,17 +162,6 @@ class TestTimedeltas(tm.TestCase):
         self.assertEqual(to_timedelta(pd.offsets.Hour(2)),Timedelta('0 days, 02:00:00'))
         self.assertEqual(Timedelta(pd.offsets.Hour(2)),Timedelta('0 days, 02:00:00'))
         self.assertEqual(Timedelta(pd.offsets.Second(2)),Timedelta('0 days, 00:00:02'))
-
-        # invalid
-        tm.assertRaisesRegexp(ValueError,
-                              "cannot construct a TimeDelta",
-                              lambda : Timedelta())
-        tm.assertRaisesRegexp(ValueError,
-                              "cannot create timedelta string convert",
-                              lambda : Timedelta('foo'))
-        tm.assertRaisesRegexp(ValueError,
-                              "cannot construct a TimeDelta from the passed arguments, allowed keywords are ",
-                              lambda : Timedelta(day=10))
 
     def test_repr(self):
 
@@ -302,51 +317,70 @@ class TestTimedeltas(tm.TestCase):
 
     def test_fields(self):
 
+        def check(value):
+            # that we are int/long like
+            self.assertTrue(isinstance(value, (int, compat.long)))
+
         # compat to datetime.timedelta
         rng = to_timedelta('1 days, 10:11:12')
-        self.assertEqual(rng.days,1)
-        self.assertEqual(rng.seconds,10*3600+11*60+12)
-        self.assertEqual(rng.microseconds,0)
-        self.assertEqual(rng.nanoseconds,0)
+        self.assertEqual(rng.days, 1)
+        self.assertEqual(rng.seconds, 10*3600+11*60+12)
+        self.assertEqual(rng.microseconds, 0)
+        self.assertEqual(rng.nanoseconds, 0)
 
         self.assertRaises(AttributeError, lambda : rng.hours)
         self.assertRaises(AttributeError, lambda : rng.minutes)
         self.assertRaises(AttributeError, lambda : rng.milliseconds)
 
+        # GH 10050
+        check(rng.days)
+        check(rng.seconds)
+        check(rng.microseconds)
+        check(rng.nanoseconds)
+
         td = Timedelta('-1 days, 10:11:12')
-        self.assertEqual(abs(td),Timedelta('13:48:48'))
+        self.assertEqual(abs(td), Timedelta('13:48:48'))
         self.assertTrue(str(td) == "-1 days +10:11:12")
-        self.assertEqual(-td,Timedelta('0 days 13:48:48'))
-        self.assertEqual(-Timedelta('-1 days, 10:11:12').value,49728000000000)
-        self.assertEqual(Timedelta('-1 days, 10:11:12').value,-49728000000000)
+        self.assertEqual(-td, Timedelta('0 days 13:48:48'))
+        self.assertEqual(-Timedelta('-1 days, 10:11:12').value, 49728000000000)
+        self.assertEqual(Timedelta('-1 days, 10:11:12').value, -49728000000000)
 
         rng = to_timedelta('-1 days, 10:11:12.100123456')
-        self.assertEqual(rng.days,-1)
-        self.assertEqual(rng.seconds,10*3600+11*60+12)
-        self.assertEqual(rng.microseconds,100*1000+123)
-        self.assertEqual(rng.nanoseconds,456)
+        self.assertEqual(rng.days, -1)
+        self.assertEqual(rng.seconds, 10*3600+11*60+12)
+        self.assertEqual(rng.microseconds, 100*1000+123)
+        self.assertEqual(rng.nanoseconds, 456)
         self.assertRaises(AttributeError, lambda : rng.hours)
         self.assertRaises(AttributeError, lambda : rng.minutes)
         self.assertRaises(AttributeError, lambda : rng.milliseconds)
 
         # components
         tup = pd.to_timedelta(-1, 'us').components
-        self.assertEqual(tup.days,-1)
-        self.assertEqual(tup.hours,23)
-        self.assertEqual(tup.minutes,59)
-        self.assertEqual(tup.seconds,59)
-        self.assertEqual(tup.milliseconds,999)
-        self.assertEqual(tup.microseconds,999)
-        self.assertEqual(tup.nanoseconds,0)
+        self.assertEqual(tup.days, -1)
+        self.assertEqual(tup.hours, 23)
+        self.assertEqual(tup.minutes, 59)
+        self.assertEqual(tup.seconds, 59)
+        self.assertEqual(tup.milliseconds, 999)
+        self.assertEqual(tup.microseconds, 999)
+        self.assertEqual(tup.nanoseconds, 0)
+
+        # GH 10050
+        check(tup.days)
+        check(tup.hours)
+        check(tup.minutes)
+        check(tup.seconds)
+        check(tup.milliseconds)
+        check(tup.microseconds)
+        check(tup.nanoseconds)
 
         tup = Timedelta('-1 days 1 us').components
-        self.assertEqual(tup.days,-2)
-        self.assertEqual(tup.hours,23)
-        self.assertEqual(tup.minutes,59)
-        self.assertEqual(tup.seconds,59)
-        self.assertEqual(tup.milliseconds,999)
-        self.assertEqual(tup.microseconds,999)
-        self.assertEqual(tup.nanoseconds,0)
+        self.assertEqual(tup.days, -2)
+        self.assertEqual(tup.hours, 23)
+        self.assertEqual(tup.minutes, 59)
+        self.assertEqual(tup.seconds, 59)
+        self.assertEqual(tup.milliseconds, 999)
+        self.assertEqual(tup.microseconds, 999)
+        self.assertEqual(tup.nanoseconds, 0)
 
     def test_timedelta_range(self):
 
@@ -607,7 +641,7 @@ class TestTimedeltas(tm.TestCase):
         self.assertEqual(result, expected)
 
         result = td.median()
-        expected = to_timedelta('00:00:08')
+        expected = to_timedelta('00:00:09')
         self.assertEqual(result, expected)
 
         result = td.to_frame().median()
@@ -633,6 +667,14 @@ class TestTimedeltas(tm.TestCase):
         # invalid ops
         for op in ['skew','kurt','sem','var','prod']:
             self.assertRaises(TypeError, lambda : getattr(td,op)())
+
+        # GH 10040
+        # make sure NaT is properly handled by median()
+        s = Series([Timestamp('2015-02-03'), Timestamp('2015-02-07')])
+        self.assertEqual(s.diff().median(), timedelta(days=4))
+
+        s = Series([Timestamp('2015-02-03'), Timestamp('2015-02-07'), Timestamp('2015-02-15')])
+        self.assertEqual(s.diff().median(), timedelta(days=6))
 
     def test_timedelta_ops_scalar(self):
         # GH 6808
@@ -835,7 +877,7 @@ class TestTimedeltaIndex(tm.TestCase):
         idx = Index(['a', 'b', 'c', 'd'])
 
         result = rng.append(idx)
-        tm.assert_isinstance(result[0], Timedelta)
+        tm.assertIsInstance(result[0], Timedelta)
 
         # it works
         rng.join(idx, how='outer')
@@ -942,6 +984,10 @@ class TestTimedeltaIndex(tm.TestCase):
                             name='TEST')
         self.assertEqual(idx.name, 'TEST')
 
+        # GH10025
+        idx2 = TimedeltaIndex(idx, name='something else')
+        self.assertEqual(idx2.name, 'something else')
+
     def test_freq_conversion(self):
 
         # doc example
@@ -1000,8 +1046,6 @@ class TestTimedeltaIndex(tm.TestCase):
         self.assert_numpy_array_equal(result, exp)
 
     def test_comparisons_nat(self):
-        if PY3_2:
-            raise nose.SkipTest('nat comparisons on 3.2 broken')
 
         tdidx1 = pd.TimedeltaIndex(['1 day', pd.NaT, '1 day 00:00:01', pd.NaT,
                                     '1 day 00:00:01', '5 day 00:00:03'])
@@ -1059,7 +1103,7 @@ class TestTimedeltaIndex(tm.TestCase):
 
         rng = timedelta_range('1 day', periods=5)
         result = rng.groupby(rng.days)
-        tm.assert_isinstance(list(result.values())[0][0], Timedelta)
+        tm.assertIsInstance(list(result.values())[0][0], Timedelta)
 
         idx = TimedeltaIndex(['3d','1d','2d'])
         self.assertTrue(idx.equals(list(idx)))
@@ -1265,7 +1309,7 @@ class TestTimedeltaIndex(tm.TestCase):
 
         for taken in [taken1, taken2]:
             self.assertTrue(taken.equals(expected))
-            tm.assert_isinstance(taken, TimedeltaIndex)
+            tm.assertIsInstance(taken, TimedeltaIndex)
             self.assertIsNone(taken.freq)
             self.assertEqual(taken.name, expected.name)
 

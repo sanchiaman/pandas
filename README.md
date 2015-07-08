@@ -1,6 +1,45 @@
 # pandas: powerful Python data analysis toolkit
 
-![Travis-CI Build Status](https://travis-ci.org/pydata/pandas.svg)
+<table>
+<tr>
+  <td>Latest Release</td>
+  <td><img src="https://img.shields.io/pypi/v/pandas.svg" alt="latest release" /></td>
+</tr>
+<tr>
+  <td>Package Status</td>
+  <td><img src="https://img.shields.io/pypi/status/pandas.svg" alt="status" /></td>
+</tr>
+<tr>
+  <td>License</td>
+  <td><img src="https://img.shields.io/pypi/l/pandas.svg" alt="license" /></td>
+</tr>
+<tr>
+  <td>Build Status</td>
+  <td>
+    <a href="https://travis-ci.org/pydata/pandas">
+    <img src="https://travis-ci.org/pydata/pandas.svg?branch=master" alt="build status" />
+    </a>
+  </td>
+</tr>
+<tr>
+  <td>Conda</td>
+  <td>
+    <a href="http://pandas.pydata.org">
+    <img src="http://pubbadges.s3-website-us-east-1.amazonaws.com/pkgs-downloads-pandas.png" alt="conda downloads" />
+    </a>
+  </td>
+</tr>
+<tr>
+  <td>PyPI</td>
+  <td>
+    <a href="https://pypi.python.org/pypi/pandas/">
+    <img src="https://img.shields.io/pypi/dm/pandas.svg" alt="pypi downloads" />
+    </a>
+  </td>
+</tr>
+</table>
+
+[![https://gitter.im/pydata/pandas](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/pydata/pandas?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ## What is it
 
@@ -87,6 +126,12 @@ or  `pip`:
 pip install pandas
 ```
 
+or  `conda`:
+
+```sh
+conda install pandas
+```
+
 ## Dependencies
 - [NumPy](http://www.numpy.org): 1.7.0 or higher
 - [python-dateutil](http://labix.org/python-dateutil): 1.5 or higher
@@ -117,7 +162,7 @@ pip install pandas
      - xlrd >= 0.9.0
   - [XlsxWriter](https://pypi.python.org/pypi/XlsxWriter)
      - Alternative Excel writer.
-- [Google bq Command Line Tool](https://developers.google.com/bigquery/bq-command-line-tool/)
+- [Google bq Command Line Tool](https://cloud.google.com/bigquery/bq-command-line-tool)
   - Needed for `pandas.io.gbq`
 - [boto](https://pypi.python.org/pypi/boto): necessary for Amazon S3 access.
 - One of the following combinations of libraries is needed to use the

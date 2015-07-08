@@ -1,7 +1,10 @@
+import sys
 cimport util
 from tslib import NaT
 from datetime import datetime, timedelta
 iNaT = util.get_nat()
+
+cdef bint PY2 = sys.version_info[0] == 2
 
 # core.common import for fast inference checks
 def is_float(object obj):
@@ -38,10 +41,10 @@ _TYPE_MAP = {
     'f' : 'floating',
     'complex128': 'complex',
     'c' : 'complex',
-    'string': 'string',
-    'S' : 'string',
-    'unicode': 'unicode',
-    'U' : 'unicode',
+    'string': 'string' if PY2 else 'bytes',
+    'S' : 'string' if PY2 else 'bytes',
+    'unicode': 'unicode' if PY2 else 'string',
+    'U' : 'unicode' if PY2 else 'string',
     'bool': 'boolean',
     'b' : 'boolean',
     'datetime64[ns]' : 'datetime64',
@@ -181,6 +184,10 @@ def infer_dtype(object _values):
         if is_unicode_array(values):
             return 'unicode'
 
+    elif PyBytes_Check(val):
+        if is_bytes_array(values):
+            return 'bytes'
+
     elif is_timedelta(val):
         if is_timedelta_or_timedelta64_array(values):
             return 'timedelta'
@@ -195,11 +202,6 @@ def infer_dtype(object _values):
             return 'mixed-integer'
 
     return 'mixed'
-
-def infer_dtype_list(list values):
-    cdef:
-        Py_ssize_t i, n = len(values)
-    pass
 
 
 def is_possible_datetimelike_array(object arr):
@@ -253,7 +255,6 @@ def is_bool_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
     if issubclass(values.dtype.type, np.bool_):
         return True
@@ -277,7 +278,6 @@ def is_integer_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
     if issubclass(values.dtype.type, np.integer):
         return True
@@ -298,7 +298,6 @@ def is_integer_float_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
     if issubclass(values.dtype.type, np.integer):
         return True
@@ -321,7 +320,6 @@ def is_float_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
     if issubclass(values.dtype.type, np.floating):
         return True
@@ -342,9 +340,9 @@ def is_string_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
-    if issubclass(values.dtype.type, (np.string_, np.unicode_)):
+    if ((PY2 and issubclass(values.dtype.type, np.string_)) or
+        not PY2 and issubclass(values.dtype.type, np.unicode_)):
         return True
     elif values.dtype == np.object_:
         objbuf = values
@@ -363,7 +361,6 @@ def is_unicode_array(ndarray values):
     cdef:
         Py_ssize_t i, n = len(values)
         ndarray[object] objbuf
-        object obj
 
     if issubclass(values.dtype.type, np.unicode_):
         return True
@@ -381,8 +378,29 @@ def is_unicode_array(ndarray values):
         return False
 
 
+def is_bytes_array(ndarray values):
+    cdef:
+        Py_ssize_t i, n = len(values)
+        ndarray[object] objbuf
+
+    if issubclass(values.dtype.type, np.bytes_):
+        return True
+    elif values.dtype == np.object_:
+        objbuf = values
+
+        if n == 0:
+            return False
+
+        for i in range(n):
+            if not PyBytes_Check(objbuf[i]):
+                return False
+        return True
+    else:
+        return False
+
+
 def is_datetime_array(ndarray[object] values):
-    cdef int i, null_count = 0, n = len(values)
+    cdef Py_ssize_t i, null_count = 0, n = len(values)
     cdef object v
     if n == 0:
         return False
@@ -399,7 +417,7 @@ def is_datetime_array(ndarray[object] values):
     return null_count != n
 
 def is_datetime64_array(ndarray values):
-    cdef int i, null_count = 0, n = len(values)
+    cdef Py_ssize_t i, null_count = 0, n = len(values)
     cdef object v
     if n == 0:
         return False
@@ -416,7 +434,7 @@ def is_datetime64_array(ndarray values):
     return null_count != n
 
 def is_timedelta_array(ndarray values):
-    cdef int i, null_count = 0, n = len(values)
+    cdef Py_ssize_t i, null_count = 0, n = len(values)
     cdef object v
     if n == 0:
         return False
@@ -431,7 +449,7 @@ def is_timedelta_array(ndarray values):
     return null_count != n
 
 def is_timedelta64_array(ndarray values):
-    cdef int i, null_count = 0, n = len(values)
+    cdef Py_ssize_t i, null_count = 0, n = len(values)
     cdef object v
     if n == 0:
         return False
@@ -447,7 +465,7 @@ def is_timedelta64_array(ndarray values):
 
 def is_timedelta_or_timedelta64_array(ndarray values):
     """ infer with timedeltas and/or nat/none """
-    cdef int i, null_count = 0, n = len(values)
+    cdef Py_ssize_t i, null_count = 0, n = len(values)
     cdef object v
     if n == 0:
         return False
@@ -462,7 +480,7 @@ def is_timedelta_or_timedelta64_array(ndarray values):
     return null_count != n
 
 def is_date_array(ndarray[object] values):
-    cdef int i, n = len(values)
+    cdef Py_ssize_t i, n = len(values)
     if n == 0:
         return False
     for i in range(n):
@@ -471,7 +489,7 @@ def is_date_array(ndarray[object] values):
     return True
 
 def is_time_array(ndarray[object] values):
-    cdef int i, n = len(values)
+    cdef Py_ssize_t i, n = len(values)
     if n == 0:
         return False
     for i in range(n):
@@ -484,7 +502,7 @@ def is_period(object o):
     return isinstance(o,Period)
 
 def is_period_array(ndarray[object] values):
-    cdef int i, n = len(values)
+    cdef Py_ssize_t i, n = len(values)
     from pandas.tseries.period import Period
 
     if n == 0:
@@ -496,11 +514,10 @@ def is_period_array(ndarray[object] values):
 
 
 cdef extern from "parse_helper.h":
-    inline int floatify(object, double *result) except -1
+    inline int floatify(object, double *result, int *maybe_int) except -1
 
-cdef double fINT64_MAX = <double> INT64_MAX
-cdef double fINT64_MIN = <double> INT64_MIN
-
+cdef int64_t iINT64_MAX = <int64_t> INT64_MAX
+cdef int64_t iINT64_MIN = <int64_t> INT64_MIN
 
 def maybe_convert_numeric(object[:] values, set na_values,
                           bint convert_empty=True, bint coerce_numeric=False):
@@ -509,7 +526,7 @@ def maybe_convert_numeric(object[:] values, set na_values,
     convert to proper dtype array
     '''
     cdef:
-        int status
+        int status, maybe_int
         Py_ssize_t i, n = values.size
         ndarray[float64_t] floats = np.empty(n, dtype='f8')
         ndarray[complex128_t] complexes = np.empty(n, dtype='c16')
@@ -551,18 +568,16 @@ def maybe_convert_numeric(object[:] values, set na_values,
             seen_complex = True
         else:
             try:
-                status = floatify(val, &fval)
+                status = floatify(val, &fval, &maybe_int)
                 floats[i] = fval
                 if not seen_float:
-                    if '.' in val or fval == INF or fval == NEGINF:
-                        seen_float = True
-                    elif 'inf' in val:  # special case to handle +/-inf
-                        seen_float = True
-                    elif fval < fINT64_MAX and fval > fINT64_MIN:
-                        try:
-                            ints[i] = int(val)
-                        except ValueError:
-                            ints[i] = <int64_t> fval
+                    if maybe_int:
+                        as_int = int(val)
+
+                        if as_int <= iINT64_MAX and as_int >= iINT64_MIN:
+                            ints[i] = as_int
+                        else:
+                            raise ValueError('integer out of range')
                     else:
                         seen_float = True
             except:

@@ -19,7 +19,7 @@ import pandas.algos as algos
 import pandas.lib as lib
 import pandas.tslib as tslib
 from pandas import compat
-from pandas.compat import StringIO, BytesIO, range, long, u, zip, map, string_types
+from pandas.compat import StringIO, BytesIO, range, long, u, zip, map, string_types, iteritems
 
 from pandas.core.config import get_option
 
@@ -38,6 +38,17 @@ class SettingWithCopyWarning(Warning):
 class AmbiguousIndexError(PandasError, KeyError):
     pass
 
+
+class AbstractMethodError(NotImplementedError):
+    """Raise this error instead of NotImplementedError for abstract methods
+    while keeping compatibility with Python 2 and Python 3.
+    """
+    def __init__(self, class_instance):
+        self.class_instance = class_instance
+
+    def __str__(self):
+        return "This method must be defined on the concrete class of " \
+               + self.class_instance.__class__.__name__
 
 _POSSIBLY_CAST_DTYPES = set([np.dtype(t).name
                              for t in ['O', 'int8',
@@ -72,6 +83,16 @@ ABCMultiIndex = create_pandas_abc_type("ABCMultiIndex", "_typ", ("multiindex",))
 ABCDatetimeIndex = create_pandas_abc_type("ABCDatetimeIndex", "_typ", ("datetimeindex",))
 ABCTimedeltaIndex = create_pandas_abc_type("ABCTimedeltaIndex", "_typ", ("timedeltaindex",))
 ABCPeriodIndex = create_pandas_abc_type("ABCPeriodIndex", "_typ", ("periodindex",))
+ABCCategoricalIndex = create_pandas_abc_type("ABCCategoricalIndex", "_typ", ("categoricalindex",))
+ABCIndexClass = create_pandas_abc_type("ABCIndexClass", "_typ", ("index",
+                                                                 "int64index",
+                                                                 "float64index",
+                                                                 "multiindex",
+                                                                 "datetimeindex",
+                                                                 "timedeltaindex",
+                                                                 "periodindex",
+                                                                 "categoricalindex"))
+
 ABCSeries = create_pandas_abc_type("ABCSeries", "_typ", ("series",))
 ABCDataFrame = create_pandas_abc_type("ABCDataFrame", "_typ", ("dataframe",))
 ABCPanel = create_pandas_abc_type("ABCPanel", "_typ", ("panel",))
@@ -761,6 +782,11 @@ def take_nd(arr, indexer, axis=0, out=None, fill_value=np.nan,
         will be done.  This short-circuits computation of a mask.  Result is
         undefined if allow_fill == False and -1 is present in indexer.
     """
+
+    if is_categorical(arr):
+        return arr.take_nd(indexer, fill_value=fill_value,
+                           allow_fill=allow_fill)
+
     if indexer is None:
         indexer = np.arange(arr.shape[axis], dtype=np.int64)
         dtype, fill_value = arr.dtype, arr.dtype.type()
@@ -818,7 +844,6 @@ def take_nd(arr, indexer, axis=0, out=None, fill_value=np.nan,
 
     func = _get_take_nd_function(arr.ndim, arr.dtype, out.dtype,
                                  axis=axis, mask_info=mask_info)
-
     indexer = _ensure_int64(indexer)
     func(arr, indexer, out, fill_value)
 
@@ -1081,15 +1106,6 @@ def _infer_dtype_from_scalar(val):
     return dtype, val
 
 
-def _maybe_cast_scalar(dtype, value):
-    """ if we a scalar value and are casting to a dtype that needs nan -> NaT
-    conversion
-    """
-    if np.isscalar(value) and dtype in _DATELIKE_DTYPES and isnull(value):
-        return tslib.iNaT
-    return value
-
-
 def _maybe_promote(dtype, fill_value=np.nan):
 
     # if we passed an array here, determine the fill value by dtype
@@ -1154,16 +1170,39 @@ def _maybe_promote(dtype, fill_value=np.nan):
     return dtype, fill_value
 
 
-def _maybe_upcast_putmask(result, mask, other, dtype=None, change=None):
-    """ a safe version of put mask that (potentially upcasts the result
-    return the result
-    if change is not None, then MUTATE the change (and change the dtype)
-    return a changed flag
+def _maybe_upcast_putmask(result, mask, other):
+    """
+    A safe version of putmask that potentially upcasts the result
+
+    Parameters
+    ----------
+    result : ndarray
+        The destination array. This will be mutated in-place if no upcasting is
+        necessary.
+    mask : boolean ndarray
+    other : ndarray or scalar
+        The source array or value
+
+    Returns
+    -------
+    result : ndarray
+    changed : boolean
+        Set to true if the result array was upcasted
     """
 
     if mask.any():
-
-        other = _maybe_cast_scalar(result.dtype, other)
+        # Two conversions for date-like dtypes that can't be done automatically
+        # in np.place:
+        #   NaN -> NaT
+        #   integer or integer array -> date-like array
+        if result.dtype in _DATELIKE_DTYPES:
+            if lib.isscalar(other):
+                if isnull(other):
+                    other = result.dtype.type('nat')
+                elif is_integer(other):
+                    other = np.array(other, dtype=result.dtype)
+            elif is_integer_dtype(other):
+                other = np.array(other, dtype=result.dtype)
 
         def changeit():
 
@@ -1173,39 +1212,26 @@ def _maybe_upcast_putmask(result, mask, other, dtype=None, change=None):
                 om = other[mask]
                 om_at = om.astype(result.dtype)
                 if (om == om_at).all():
-                    new_other = result.values.copy()
-                    new_other[mask] = om_at
-                    result[:] = new_other
+                    new_result = result.values.copy()
+                    new_result[mask] = om_at
+                    result[:] = new_result
                     return result, False
             except:
                 pass
 
             # we are forced to change the dtype of the result as the input
             # isn't compatible
-            r, fill_value = _maybe_upcast(
-                result, fill_value=other, dtype=dtype, copy=True)
-            np.putmask(r, mask, other)
-
-            # we need to actually change the dtype here
-            if change is not None:
-
-                # if we are trying to do something unsafe
-                # like put a bigger dtype in a smaller one, use the smaller one
-                # pragma: no cover
-                if change.dtype.itemsize < r.dtype.itemsize:
-                    raise AssertionError(
-                        "cannot change dtype of input to smaller size")
-                change.dtype = r.dtype
-                change[:] = r
+            r, _ = _maybe_upcast(result, fill_value=other, copy=True)
+            np.place(r, mask, other)
 
             return r, True
 
-        # we want to decide whether putmask will work
+        # we want to decide whether place will work
         # if we have nans in the False portion of our mask then we need to
-        # upcast (possibily) otherwise we DON't want to upcast (e.g. if we are
-        # have values, say integers in the success portion then its ok to not
+        # upcast (possibly), otherwise we DON't want to upcast (e.g. if we
+        # have values, say integers, in the success portion then it's ok to not
         # upcast)
-        new_dtype, fill_value = _maybe_promote(result.dtype, other)
+        new_dtype, _ = _maybe_promote(result.dtype, other)
         if new_dtype != result.dtype:
 
             # we have a scalar or len 0 ndarray
@@ -1222,7 +1248,7 @@ def _maybe_upcast_putmask(result, mask, other, dtype=None, change=None):
                     return changeit()
 
         try:
-            np.putmask(result, mask, other)
+            np.place(result, mask, other)
         except:
             return changeit()
 
@@ -1396,14 +1422,19 @@ def _fill_zeros(result, x, y, name, fill):
 
     mask the nan's from x
     """
-
     if fill is None or is_float_dtype(result):
         return result
 
     if name.startswith(('r', '__r')):
         x,y = y,x
 
-    if np.isscalar(y):
+    is_typed_variable = (hasattr(y, 'dtype') or hasattr(y,'type'))
+    is_scalar = lib.isscalar(y)
+
+    if not is_typed_variable and not is_scalar:
+        return result
+
+    if is_scalar:
         y = np.array(y)
 
     if is_integer_dtype(y):
@@ -1561,7 +1592,8 @@ def backfill_2d(values, limit=None, mask=None, dtype=None):
     return values
 
 
-def _clean_interp_method(method, order=None):
+def _clean_interp_method(method, **kwargs):
+    order = kwargs.get('order')
     valid = ['linear', 'time', 'index', 'values', 'nearest', 'zero', 'slinear',
              'quadratic', 'cubic', 'barycentric', 'polynomial',
              'krogh', 'piecewise_polynomial',
@@ -1576,7 +1608,7 @@ def _clean_interp_method(method, order=None):
 
 
 def interpolate_1d(xvalues, yvalues, method='linear', limit=None,
-                   fill_value=None, bounds_error=False, order=None):
+                   fill_value=None, bounds_error=False, order=None, **kwargs):
     """
     Logic for the 1-d interpolation.  The result should be 1-d, inputs
     xvalues and yvalues will each be 1-d arrays of the same length.
@@ -1655,18 +1687,17 @@ def interpolate_1d(xvalues, yvalues, method='linear', limit=None,
                   'piecewise_polynomial', 'pchip']
     if method in sp_methods:
         new_x = new_x[firstIndex:]
-        xvalues = xvalues[firstIndex:]
 
         result[firstIndex:][invalid] = _interpolate_scipy_wrapper(
             valid_x, valid_y, new_x, method=method, fill_value=fill_value,
-            bounds_error=bounds_error, order=order)
+            bounds_error=bounds_error, order=order, **kwargs)
         if limit:
             result[violate_limit] = np.nan
         return result
 
 
 def _interpolate_scipy_wrapper(x, y, new_x, method, fill_value=None,
-                               bounds_error=False, order=None):
+                               bounds_error=False, order=None, **kwargs):
     """
     passed off to scipy.interpolate.interp1d. method is scipy's kind.
     Returns an array interpolated at new_x.  Add any new methods to
@@ -1707,7 +1738,7 @@ def _interpolate_scipy_wrapper(x, y, new_x, method, fill_value=None,
                                     bounds_error=bounds_error)
         new_y = terp(new_x)
     elif method == 'spline':
-        terp = interpolate.UnivariateSpline(x, y, k=order)
+        terp = interpolate.UnivariateSpline(x, y, k=order, **kwargs)
         new_y = terp(new_x)
     else:
         # GH 7295: need to be able to write for some reason
@@ -1719,7 +1750,7 @@ def _interpolate_scipy_wrapper(x, y, new_x, method, fill_value=None,
         if not new_x.flags.writeable:
             new_x = new_x.copy()
         method = alt_methods[method]
-        new_y = method(x, y, new_x)
+        new_y = method(x, y, new_x, **kwargs)
     return new_y
 
 
@@ -2438,8 +2469,27 @@ def _get_dtype_type(arr_or_dtype):
         return np.dtype(arr_or_dtype).type
     elif isinstance(arr_or_dtype, CategoricalDtype):
         return CategoricalDtypeType
-    return arr_or_dtype.dtype.type
+    elif isinstance(arr_or_dtype, compat.string_types):
+        if is_categorical_dtype(arr_or_dtype):
+            return CategoricalDtypeType
+        return _get_dtype_type(np.dtype(arr_or_dtype))
+    try:
+        return arr_or_dtype.dtype.type
+    except AttributeError:
+        raise ValueError('%r is not a dtype' % arr_or_dtype)
 
+def is_dtype_equal(source, target):
+    """ return a boolean if the dtypes are equal """
+    source = _get_dtype_type(source)
+    target = _get_dtype_type(target)
+
+    try:
+        return source == target
+    except TypeError:
+
+        # invalid comparison
+        # object == category will hit this
+        return False
 
 def is_any_int_dtype(arr_or_dtype):
     tipo = _get_dtype_type(arr_or_dtype)
@@ -2450,6 +2500,10 @@ def is_integer_dtype(arr_or_dtype):
     tipo = _get_dtype_type(arr_or_dtype)
     return (issubclass(tipo, np.integer) and
             not issubclass(tipo, (np.datetime64, np.timedelta64)))
+
+def is_int64_dtype(arr_or_dtype):
+    tipo = _get_dtype_type(arr_or_dtype)
+    return issubclass(tipo, np.int64)
 
 
 def is_int_or_datetime_dtype(arr_or_dtype):
@@ -2509,7 +2563,11 @@ def is_floating_dtype(arr_or_dtype):
 
 
 def is_bool_dtype(arr_or_dtype):
-    tipo = _get_dtype_type(arr_or_dtype)
+    try:
+        tipo = _get_dtype_type(arr_or_dtype)
+    except ValueError:
+        # this isn't even a dtype
+        return False
     return issubclass(tipo, np.bool_)
 
 def is_categorical(array):
@@ -2555,9 +2613,14 @@ def is_list_like(arg):
             not isinstance(arg, compat.string_and_binary_types))
 
 def is_null_slice(obj):
+    """ we have a null slice """
     return (isinstance(obj, slice) and obj.start is None and
             obj.stop is None and obj.step is None)
 
+def is_full_slice(obj, l):
+    """ we have a full length slice """
+    return (isinstance(obj, slice) and obj.start == 0 and
+            obj.stop == l and obj.step is None)
 
 def is_hashable(arg):
     """Return True if hash(arg) will succeed, False otherwise.
@@ -2636,7 +2699,12 @@ def _astype_nansafe(arr, dtype, copy=True):
     if not isinstance(dtype, np.dtype):
         dtype = _coerce_to_dtype(dtype)
 
-    if is_datetime64_dtype(arr):
+    if issubclass(dtype.type, compat.text_type):
+        # in Py3 that's str, in Py2 that's unicode
+        return lib.astype_unicode(arr.ravel()).reshape(arr.shape)
+    elif issubclass(dtype.type, compat.string_types):
+        return lib.astype_str(arr.ravel()).reshape(arr.shape)
+    elif is_datetime64_dtype(arr):
         if dtype == object:
             return tslib.ints_to_pydatetime(arr.view(np.int64))
         elif dtype == np.int64:
@@ -2674,11 +2742,6 @@ def _astype_nansafe(arr, dtype, copy=True):
     elif arr.dtype == np.object_ and np.issubdtype(dtype.type, np.integer):
         # work around NumPy brokenness, #1987
         return lib.astype_intsafe(arr.ravel(), dtype).reshape(arr.shape)
-    elif issubclass(dtype.type, compat.text_type):
-        # in Py3 that's str, in Py2 that's unicode
-        return lib.astype_unicode(arr.ravel()).reshape(arr.shape)
-    elif issubclass(dtype.type, compat.string_types):
-        return lib.astype_str(arr.ravel()).reshape(arr.shape)
 
     if copy:
         return arr.astype(dtype)
@@ -2763,11 +2826,7 @@ def _get_handle(path, mode, encoding=None, compression=None):
         else:
             raise ValueError('Unrecognized compression type: %s' %
                              compression)
-        if compat.PY3_2:
-            # gzip and bz2 don't work with TextIOWrapper in 3.2
-            encoding = encoding or get_option('display.encoding')
-            f = StringIO(f.read().decode(encoding))
-        elif compat.PY3:
+        if compat.PY3:
             from io import TextIOWrapper
             f = TextIOWrapper(f, encoding=encoding)
         return f
@@ -2978,13 +3037,27 @@ def _where_compat(mask, arr1, arr2):
 
     return np.where(mask, arr1, arr2)
 
+def _dict_compat(d):
+    """
+    Helper function to convert datetimelike-keyed dicts to Timestamp-keyed dict
+
+    Parameters
+    ----------
+    d: dict like object
+
+    Returns
+    -------
+    dict
+
+    """
+    return dict((_maybe_box_datetimelike(key), value) for key, value in iteritems(d))
 
 def sentinel_factory():
+
     class Sentinel(object):
         pass
 
     return Sentinel()
-
 
 def in_interactive_session():
     """ check if we're running in an interactive shell
@@ -3082,7 +3155,7 @@ def in_ipython_frontend():
 #    working with straight ascii.
 
 
-def _pprint_seq(seq, _nest_lvl=0, **kwds):
+def _pprint_seq(seq, _nest_lvl=0, max_seq_items=None, **kwds):
     """
     internal. pprinter for iterables. you should probably use pprint_thing()
     rather then calling this directly.
@@ -3094,12 +3167,15 @@ def _pprint_seq(seq, _nest_lvl=0, **kwds):
     else:
         fmt = u("[%s]") if hasattr(seq, '__setitem__') else u("(%s)")
 
-    nitems = get_option("max_seq_items") or len(seq)
+    if max_seq_items is False:
+        nitems = len(seq)
+    else:
+        nitems = max_seq_items or get_option("max_seq_items") or len(seq)
 
     s = iter(seq)
     r = []
     for i in range(min(nitems, len(seq))):  # handle sets, no slicing
-        r.append(pprint_thing(next(s), _nest_lvl + 1, **kwds))
+        r.append(pprint_thing(next(s), _nest_lvl + 1, max_seq_items=max_seq_items, **kwds))
     body = ", ".join(r)
 
     if nitems < len(seq):
@@ -3110,7 +3186,7 @@ def _pprint_seq(seq, _nest_lvl=0, **kwds):
     return fmt % body
 
 
-def _pprint_dict(seq, _nest_lvl=0, **kwds):
+def _pprint_dict(seq, _nest_lvl=0, max_seq_items=None, **kwds):
     """
     internal. pprinter for iterables. you should probably use pprint_thing()
     rather then calling this directly.
@@ -3120,11 +3196,14 @@ def _pprint_dict(seq, _nest_lvl=0, **kwds):
 
     pfmt = u("%s: %s")
 
-    nitems = get_option("max_seq_items") or len(seq)
+    if max_seq_items is False:
+        nitems = len(seq)
+    else:
+        nitems = max_seq_items or get_option("max_seq_items") or len(seq)
 
     for k, v in list(seq.items())[:nitems]:
-        pairs.append(pfmt % (pprint_thing(k, _nest_lvl + 1, **kwds),
-                             pprint_thing(v, _nest_lvl + 1, **kwds)))
+        pairs.append(pfmt % (pprint_thing(k, _nest_lvl + 1, max_seq_items=max_seq_items, **kwds),
+                             pprint_thing(v, _nest_lvl + 1, max_seq_items=max_seq_items, **kwds)))
 
     if nitems < len(seq):
         return fmt % (", ".join(pairs) + ", ...")
@@ -3133,7 +3212,7 @@ def _pprint_dict(seq, _nest_lvl=0, **kwds):
 
 
 def pprint_thing(thing, _nest_lvl=0, escape_chars=None, default_escapes=False,
-                 quote_strings=False):
+                 quote_strings=False, max_seq_items=None):
     """
     This function is the sanctioned way of converting objects
     to a unicode representation.
@@ -3152,6 +3231,8 @@ def pprint_thing(thing, _nest_lvl=0, escape_chars=None, default_escapes=False,
         replacements
     default_escapes : bool, default False
         Whether the input escape characters replaces or adds to the defaults
+    max_seq_items : False, int, default None
+        Pass thru to other pretty printers to limit sequence printing
 
     Returns
     -------
@@ -3190,11 +3271,11 @@ def pprint_thing(thing, _nest_lvl=0, escape_chars=None, default_escapes=False,
         return compat.text_type(thing)
     elif (isinstance(thing, dict) and
           _nest_lvl < get_option("display.pprint_nest_depth")):
-        result = _pprint_dict(thing, _nest_lvl, quote_strings=True)
+        result = _pprint_dict(thing, _nest_lvl, quote_strings=True, max_seq_items=max_seq_items)
     elif is_sequence(thing) and _nest_lvl < \
             get_option("display.pprint_nest_depth"):
         result = _pprint_seq(thing, _nest_lvl, escape_chars=escape_chars,
-                             quote_strings=quote_strings)
+                             quote_strings=quote_strings, max_seq_items=max_seq_items)
     elif isinstance(thing, compat.string_types) and quote_strings:
         if compat.PY3:
             fmt = "'%s'"
@@ -3264,8 +3345,42 @@ def save(obj, path):  # TODO remove in 0.13
 
 
 def _maybe_match_name(a, b):
-    a_name = getattr(a, 'name', None)
-    b_name = getattr(b, 'name', None)
-    if a_name == b_name:
-        return a_name
+    a_has = hasattr(a, 'name')
+    b_has = hasattr(b, 'name')
+    if a_has and b_has:
+        if a.name == b.name:
+            return a.name
+        else:
+            return None
+    elif a_has:
+        return a.name
+    elif b_has:
+        return b.name
     return None
+
+def _random_state(state=None):
+    """
+    Helper function for processing random_state arguments.
+
+    Parameters
+    ----------
+    state : int, np.random.RandomState, None.
+        If receives an int, passes to np.random.RandomState() as seed.
+        If receives an np.random.RandomState object, just returns object.
+        If receives `None`, returns an np.random.RandomState object.
+        If receives anything else, raises an informative ValueError.
+        Default None.
+
+    Returns
+    -------
+    np.random.RandomState
+    """
+
+    if is_integer(state):
+        return np.random.RandomState(state)
+    elif isinstance(state, np.random.RandomState):
+        return state
+    elif state is None:
+        return np.random.RandomState()
+    else:
+        raise ValueError("random_state must be an integer, a numpy RandomState, or None")

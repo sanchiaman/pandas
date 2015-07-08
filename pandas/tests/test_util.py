@@ -3,6 +3,7 @@ import warnings
 
 import nose
 
+import sys
 import pandas.util
 from pandas.util.decorators import deprecate_kwarg
 import pandas.util.testing as tm
@@ -58,26 +59,6 @@ class TestDecorators(tm.TestCase):
             @deprecate_kwarg('old', 'new', 0)
             def f4(new=None):
                 pass
-
-
-class TestTesting(tm.TestCase):
-
-    def test_warning(self):
-
-        with tm.assert_produces_warning(FutureWarning):
-            self.assertEquals(1, 1)
-
-        with tm.assert_produces_warning(FutureWarning):
-            self.assertNotEquals(1, 2)
-
-        with tm.assert_produces_warning(FutureWarning):
-            self.assert_(True)
-
-        with tm.assert_produces_warning(FutureWarning):
-            self.assertAlmostEquals(1.0, 1.0000000001)
-
-        with tm.assert_produces_warning(FutureWarning):
-            self.assertNotAlmostEquals(1, 2)
 
 
 def test_rands():

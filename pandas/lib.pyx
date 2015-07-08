@@ -1,6 +1,7 @@
 cimport numpy as np
 cimport cython
 import numpy as np
+import sys
 
 from numpy cimport *
 
@@ -10,6 +11,7 @@ cdef extern from "numpy/arrayobject.h":
     cdef enum NPY_TYPES:
         NPY_intp "NPY_INTP"
 
+
 from cpython cimport (PyDict_New, PyDict_GetItem, PyDict_SetItem,
                       PyDict_Contains, PyDict_Keys,
                       Py_INCREF, PyTuple_SET_ITEM,
@@ -18,7 +20,14 @@ from cpython cimport (PyDict_New, PyDict_GetItem, PyDict_SetItem,
                       PyBytes_Check,
                       PyTuple_SetItem,
                       PyTuple_New,
-                      PyObject_SetAttrString)
+                      PyObject_SetAttrString,
+                      PyBytes_GET_SIZE,
+                      PyUnicode_GET_SIZE)
+
+try:
+    from cpython cimport PyString_GET_SIZE
+except ImportError:
+    from cpython cimport PyUnicode_GET_SIZE as PyString_GET_SIZE
 
 cdef extern from "Python.h":
     Py_ssize_t PY_SSIZE_T_MAX
@@ -30,7 +39,6 @@ cdef extern from "Python.h":
         PySliceObject* s, Py_ssize_t length,
         Py_ssize_t *start, Py_ssize_t *stop, Py_ssize_t *step,
         Py_ssize_t *slicelength) except -1
-
 
 
 cimport cpython
@@ -145,6 +153,31 @@ def ismember(ndarray arr, set values):
     for i in range(n):
         val = util.get_value_at(arr, i)
         result[i] = val in values
+
+    return result.view(np.bool_)
+
+def ismember_int64(ndarray[int64_t] arr, set values):
+    '''
+    Checks whether
+
+    Parameters
+    ----------
+    arr : ndarray of int64
+    values : set
+
+    Returns
+    -------
+    ismember : ndarray (boolean dtype)
+    '''
+    cdef:
+        Py_ssize_t i, n
+        ndarray[uint8_t] result
+        int64_t v
+
+    n = len(arr)
+    result = np.empty(n, dtype=np.uint8)
+    for i in range(n):
+        result[i] = arr[i] in values
 
     return result.view(np.bool_)
 
@@ -896,23 +929,32 @@ def clean_index_list(list obj):
 
     return maybe_convert_objects(converted), 0
 
+
+ctypedef fused pandas_string:
+    str
+    unicode
+    bytes
+
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def max_len_string_array(ndarray arr):
+cpdef Py_ssize_t max_len_string_array(pandas_string[:] arr):
     """ return the maximum size of elements in a 1-dim string array """
     cdef:
-        int i, m, l
-        int length = arr.shape[0]
-        object v
+        Py_ssize_t i, m = 0, l = 0, length = arr.shape[0]
+        pandas_string v
 
-    m = 0
-    for i from 0 <= i < length:
+    for i in range(length):
         v = arr[i]
-        if PyString_Check(v) or PyBytes_Check(v) or PyUnicode_Check(v):
-            l = len(v)
+        if PyString_Check(v):
+            l = PyString_GET_SIZE(v)
+        elif PyBytes_Check(v):
+            l = PyBytes_GET_SIZE(v)
+        elif PyUnicode_Check(v):
+            l = PyUnicode_GET_SIZE(v)
 
-            if l > m:
-                m = l
+        if l > m:
+            m = l
 
     return m
 
@@ -933,7 +975,7 @@ def string_array_replace_from_nan_rep(ndarray[object, ndim=1] arr, object nan_re
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-def write_csv_rows(list data, list data_index, int nlevels, list cols, object writer):
+def write_csv_rows(list data, ndarray data_index, int nlevels, ndarray cols, object writer):
 
     cdef int N, j, i, ncols
     cdef list rows
@@ -1306,9 +1348,10 @@ def duplicated(ndarray[object] values, take_last=False):
 
 def generate_slices(ndarray[int64_t] labels, Py_ssize_t ngroups):
     cdef:
-        Py_ssize_t i, group_size, n, lab, start
+        Py_ssize_t i, group_size, n, start
+        int64_t lab
         object slobj
-        ndarray[int64_t] starts
+        ndarray[int64_t] starts, ends
 
     n = len(labels)
 
@@ -1318,13 +1361,16 @@ def generate_slices(ndarray[int64_t] labels, Py_ssize_t ngroups):
     start = 0
     group_size = 0
     for i in range(n):
-        group_size += 1
         lab = labels[i]
-        if i == n - 1 or lab != labels[i + 1]:
-            starts[lab] = start
-            ends[lab] = start + group_size
-            start += group_size
-            group_size = 0
+        if lab < 0:
+            start += 1
+        else:
+            group_size += 1
+            if i == n - 1 or lab != labels[i + 1]:
+                starts[lab] = start
+                ends[lab] = start + group_size
+                start += group_size
+                group_size = 0
 
     return starts, ends
 

@@ -101,15 +101,15 @@ class TestPeriodProperties(tm.TestCase):
                          pytz.timezone('Europe/Brussels').normalize(p).tzinfo)
 
     def test_timestamp_tz_arg_dateutil(self):
-        import dateutil
+        from pandas.tslib import _dateutil_gettz as gettz
         from pandas.tslib import maybe_get_tz
         p = Period('1/1/2005', freq='M').to_timestamp(tz=maybe_get_tz('dateutil/Europe/Brussels'))
-        self.assertEqual(p.tz, dateutil.zoneinfo.gettz('Europe/Brussels'))
+        self.assertEqual(p.tz, gettz('Europe/Brussels'))
 
     def test_timestamp_tz_arg_dateutil_from_string(self):
-        import dateutil
+        from pandas.tslib import _dateutil_gettz as gettz
         p = Period('1/1/2005', freq='M').to_timestamp(tz='dateutil/Europe/Brussels')
-        self.assertEqual(p.tz, dateutil.zoneinfo.gettz('Europe/Brussels'))
+        self.assertEqual(p.tz, gettz('Europe/Brussels'))
 
     def test_timestamp_nat_tz(self):
         t = Period('NaT', freq='M').to_timestamp()
@@ -226,14 +226,27 @@ class TestPeriodProperties(tm.TestCase):
 
         i1 = Period(date(2007, 1, 1), freq='M')
         i2 = Period(datetime(2007, 1, 1), freq='M')
+        i3 = Period(np.datetime64('2007-01-01'), freq='M')
+        i4 = Period(np.datetime64('2007-01-01 00:00:00Z'), freq='M')
+        i5 = Period(np.datetime64('2007-01-01 00:00:00.000Z'), freq='M')
         self.assertEqual(i1, i2)
+        self.assertEqual(i1, i3)
+        self.assertEqual(i1, i4)
+        self.assertEqual(i1, i5)
 
         i1 = Period('2007-01-01 09:00:00.001')
         expected = Period(datetime(2007, 1, 1, 9, 0, 0, 1000), freq='L')
         self.assertEqual(i1, expected)
 
+        expected = Period(np.datetime64('2007-01-01 09:00:00.001Z'), freq='L')
+        self.assertEqual(i1, expected)
+
         i1 = Period('2007-01-01 09:00:00.00101')
         expected = Period(datetime(2007, 1, 1, 9, 0, 0, 1010), freq='U')
+        self.assertEqual(i1, expected)
+
+        expected = Period(np.datetime64('2007-01-01 09:00:00.00101Z'),
+                          freq='U')
         self.assertEqual(i1, expected)
 
         self.assertRaises(ValueError, Period, ordinal=200701)
@@ -269,7 +282,7 @@ class TestPeriodProperties(tm.TestCase):
         p = Period('2000-1-1 12:34:12', freq='S')
         res = p.strftime('%Y-%m-%d %H:%M:%S')
         self.assertEqual(res,  '2000-01-01 12:34:12')
-        tm.assert_isinstance(res, compat.text_type) # GH3363
+        tm.assertIsInstance(res, compat.text_type) # GH3363
 
     def test_sub_delta(self):
         left, right = Period('2011', freq='A'), Period('2007', freq='A')
@@ -432,6 +445,8 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(w_date.month, 1)
         assert_equal(w_date.week, 1)
         assert_equal((w_date - 1).week, 52)
+        assert_equal(w_date.days_in_month, 31)
+        assert_equal(Period(freq='WK', year=2012, month=2, day=1).days_in_month, 29)
 
     def test_properties_daily(self):
         # Test properties on Periods with daily frequency.
@@ -443,6 +458,8 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(b_date.day, 1)
         assert_equal(b_date.weekday, 0)
         assert_equal(b_date.dayofyear, 1)
+        assert_equal(b_date.days_in_month, 31)
+        assert_equal(Period(freq='B', year=2012, month=2, day=1).days_in_month, 29)
         #
         d_date = Period(freq='D', year=2007, month=1, day=1)
         #
@@ -452,6 +469,9 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(d_date.day, 1)
         assert_equal(d_date.weekday, 0)
         assert_equal(d_date.dayofyear, 1)
+        assert_equal(d_date.days_in_month, 31)
+        assert_equal(Period(freq='D', year=2012, month=2,
+                            day=1).days_in_month, 29)
 
     def test_properties_hourly(self):
         # Test properties on Periods with hourly frequency.
@@ -464,6 +484,9 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(h_date.weekday, 0)
         assert_equal(h_date.dayofyear, 1)
         assert_equal(h_date.hour, 0)
+        assert_equal(h_date.days_in_month, 31)
+        assert_equal(Period(freq='H', year=2012, month=2, day=1,
+                            hour=0).days_in_month, 29)
         #
 
     def test_properties_minutely(self):
@@ -478,6 +501,9 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(t_date.dayofyear, 1)
         assert_equal(t_date.hour, 0)
         assert_equal(t_date.minute, 0)
+        assert_equal(t_date.days_in_month, 31)
+        assert_equal(Period(freq='D', year=2012, month=2, day=1, hour=0,
+                            minute=0).days_in_month, 29)
 
     def test_properties_secondly(self):
         # Test properties on Periods with secondly frequency.
@@ -493,13 +519,16 @@ class TestPeriodProperties(tm.TestCase):
         assert_equal(s_date.hour, 0)
         assert_equal(s_date.minute, 0)
         assert_equal(s_date.second, 0)
+        assert_equal(s_date.days_in_month, 31)
+        assert_equal(Period(freq='Min', year=2012, month=2, day=1, hour=0,
+                            minute=0, second=0).days_in_month, 29)
 
     def test_properties_nat(self):
         p_nat = Period('NaT', freq='M')
         t_nat = pd.Timestamp('NaT')
         # confirm Period('NaT') work identical with Timestamp('NaT')
         for f in ['year', 'month', 'day', 'hour', 'minute', 'second',
-                  'week', 'dayofyear', 'quarter']:
+                  'week', 'dayofyear', 'quarter', 'days_in_month']:
             self.assertTrue(np.isnan(getattr(p_nat, f)))
             self.assertTrue(np.isnan(getattr(t_nat, f)))
 
@@ -1163,7 +1192,7 @@ class TestPeriodIndex(tm.TestCase):
     def test_make_time_series(self):
         index = PeriodIndex(freq='A', start='1/1/2001', end='12/1/2009')
         series = Series(1, index=index)
-        tm.assert_isinstance(series, TimeSeries)
+        tm.assertIsInstance(series, TimeSeries)
 
     def test_astype(self):
         idx = period_range('1990', '2009', freq='A')
@@ -1321,7 +1350,7 @@ class TestPeriodIndex(tm.TestCase):
 
         result = idx[:, None]
         # MPL kludge
-        tm.assert_isinstance(result, PeriodIndex)
+        tm.assertIsInstance(result, PeriodIndex)
 
     def test_getitem_partial(self):
         rng = period_range('2007-01', periods=50, freq='M')
@@ -1413,7 +1442,7 @@ class TestPeriodIndex(tm.TestCase):
     def test_tolist(self):
         index = PeriodIndex(freq='A', start='1/1/2001', end='12/1/2009')
         rs = index.tolist()
-        [tm.assert_isinstance(x, Period) for x in rs]
+        [tm.assertIsInstance(x, Period) for x in rs]
 
         recon = PeriodIndex(rs)
         self.assertTrue(index.equals(recon))
@@ -1533,7 +1562,7 @@ class TestPeriodIndex(tm.TestCase):
         self.assertTrue(rs.equals(rng))
 
         rs = df.reset_index().set_index('index')
-        tm.assert_isinstance(rs.index, PeriodIndex)
+        tm.assertIsInstance(rs.index, PeriodIndex)
         self.assertTrue(rs.index.equals(rng))
 
     def test_period_set_index_reindex(self):
@@ -2089,6 +2118,7 @@ class TestPeriodIndex(tm.TestCase):
         for idx in [didx, pidx]:
             df = DataFrame(dict(units=[100 + i for i in range(10)]), index=idx)
             empty = DataFrame(index=idx.__class__([], freq='D'), columns=['units'])
+            empty['units'] = empty['units'].astype('int64')
 
             tm.assert_frame_equal(df['2013/09/01':'2013/09/30'], empty)
             tm.assert_frame_equal(df['2013/09/30':'2013/10/02'], df.iloc[:2])
@@ -2182,7 +2212,7 @@ class TestPeriodIndex(tm.TestCase):
         index = PeriodIndex(start='1/1/10', periods=4, freq='B')
 
         result = list(index)
-        tm.assert_isinstance(result[0], Period)
+        tm.assertIsInstance(result[0], Period)
         self.assertEqual(result[0].freq, index.freq)
 
     def test_take(self):
@@ -2196,7 +2226,7 @@ class TestPeriodIndex(tm.TestCase):
 
         for taken in [taken1, taken2]:
             self.assertTrue(taken.equals(expected))
-            tm.assert_isinstance(taken, PeriodIndex)
+            tm.assertIsInstance(taken, PeriodIndex)
             self.assertEqual(taken.freq, index.freq)
             self.assertEqual(taken.name, expected.name)
 
@@ -2206,7 +2236,7 @@ class TestPeriodIndex(tm.TestCase):
         for kind in ['inner', 'outer', 'left', 'right']:
             joined = index.join(index[:-5], how=kind)
 
-            tm.assert_isinstance(joined, PeriodIndex)
+            tm.assertIsInstance(joined, PeriodIndex)
             self.assertEqual(joined.freq, index.freq)
 
     def test_join_self(self):
@@ -2327,7 +2357,7 @@ class TestPeriodIndex(tm.TestCase):
     def _check_all_fields(self, periodindex):
         fields = ['year', 'month', 'day', 'hour', 'minute',
                   'second', 'weekofyear', 'week', 'dayofweek',
-                  'weekday', 'dayofyear', 'quarter', 'qyear']
+                  'weekday', 'dayofyear', 'quarter', 'qyear', 'days_in_month']
 
         periods = list(periodindex)
 
@@ -2379,7 +2409,7 @@ class TestPeriodIndex(tm.TestCase):
             res = index.map(t)
 
             # should return an array
-            tm.assert_isinstance(res, np.ndarray)
+            tm.assertIsInstance(res, np.ndarray)
 
             # preserve element types
             self.assertTrue(all(isinstance(resi, t) for resi in res))
@@ -2395,7 +2425,7 @@ class TestPeriodIndex(tm.TestCase):
         periods = list(rng)
 
         result = pd.Index(periods)
-        tm.assert_isinstance(result, PeriodIndex)
+        tm.assertIsInstance(result, PeriodIndex)
 
     def test_with_multi_index(self):
         # #1705
@@ -2404,9 +2434,9 @@ class TestPeriodIndex(tm.TestCase):
 
         s = Series([0, 1, 2, 3], index_as_arrays)
 
-        tm.assert_isinstance(s.index.levels[0], PeriodIndex)
+        tm.assertIsInstance(s.index.levels[0], PeriodIndex)
 
-        tm.assert_isinstance(s.index.values[0][0], Period)
+        tm.assertIsInstance(s.index.values[0][0], Period)
 
     def test_to_datetime_1703(self):
         index = period_range('1/1/2012', periods=4, freq='D')
@@ -2437,7 +2467,7 @@ class TestPeriodIndex(tm.TestCase):
 
         # drops index
         result = pd.concat([s1, s2])
-        tm.assert_isinstance(result.index, PeriodIndex)
+        tm.assertIsInstance(result.index, PeriodIndex)
         self.assertEqual(result.index[0], s1.index[0])
 
     def test_pickle_freq(self):

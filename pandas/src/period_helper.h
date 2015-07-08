@@ -160,10 +160,11 @@ int pweek(npy_int64 ordinal, int freq);
 int phour(npy_int64 ordinal, int freq);
 int pminute(npy_int64 ordinal, int freq);
 int psecond(npy_int64 ordinal, int freq);
+int pdays_in_month(npy_int64 ordinal, int freq);
 
 double getAbsTime(int freq, npy_int64 dailyDate, npy_int64 originalDate);
 char *c_strftime(struct date_info *dinfo, char *fmt);
 int get_yq(npy_int64 ordinal, int freq, int *quarter, int *year);
 
-void initialize_daytime_conversion_factor_matrix();
+void initialize_daytime_conversion_factor_matrix(void);
 #endif

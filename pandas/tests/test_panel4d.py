@@ -471,7 +471,7 @@ class CheckIndexing(object):
         idx = self.panel4d.major_axis[5]
         xs = self.panel4d.major_xs(idx)
 
-        assert_series_equal(xs['l1'].T['ItemA'], ref.xs(idx))
+        assert_series_equal(xs['l1'].T['ItemA'], ref.xs(idx), check_names=False)
 
         # not contained
         idx = self.panel4d.major_axis[0] - bday
@@ -489,7 +489,7 @@ class CheckIndexing(object):
         idx = self.panel4d.minor_axis[1]
         xs = self.panel4d.minor_xs(idx)
 
-        assert_series_equal(xs['l1'].T['ItemA'], ref[idx])
+        assert_series_equal(xs['l1'].T['ItemA'], ref[idx], check_names=False)
 
         # not contained
         self.assertRaises(Exception, self.panel4d.minor_xs, 'E')
@@ -584,7 +584,7 @@ class CheckIndexing(object):
 
         # resize
         res = self.panel4d.set_value('l4', 'ItemE', 'foo', 'bar', 1.5)
-        tm.assert_isinstance(res, Panel4D)
+        tm.assertIsInstance(res, Panel4D)
         self.assertIsNot(res, self.panel4d)
         self.assertEqual(res.get_value('l4', 'ItemE', 'foo', 'bar'), 1.5)
 
@@ -628,6 +628,21 @@ class TestPanel4d(tm.TestCase, CheckIndexing, SafeForSparse,
         # copy
         panel4d = Panel4D(vals, copy=True)
         self.assertIsNot(panel4d.values, vals)
+
+        # GH #8285, test when scalar data is used to construct a Panel4D
+        # if dtype is not passed, it should be inferred
+        value_and_dtype = [(1, 'int64'), (3.14, 'float64'), ('foo', np.object_)]
+        for (val, dtype) in value_and_dtype:
+            panel4d = Panel4D(val, labels=range(2), items=range(3), major_axis=range(4), minor_axis=range(5))
+            vals = np.empty((2, 3, 4, 5), dtype=dtype)
+            vals.fill(val)
+            assert_panel4d_equal(panel4d, Panel4D(vals, dtype=dtype))
+
+        # test the case when dtype is passed
+        panel4d = Panel4D(1, labels=range(2), items=range(3), major_axis=range(4), minor_axis=range(5), dtype='float32')
+        vals = np.empty((2, 3, 4, 5), dtype='float32')
+        vals.fill(1)
+        assert_panel4d_equal(panel4d, Panel4D(vals, dtype='float32'))
 
     def test_constructor_cast(self):
         zero_filled = self.panel4d.fillna(0)
@@ -1084,6 +1099,5 @@ class TestPanel4d(tm.TestCase, CheckIndexing, SafeForSparse,
 
 if __name__ == '__main__':
     import nose
-    nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb', '--pdb-failure',
-                         '--with-timer'],
+    nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb', '--pdb-failure'],
                    exit=False)

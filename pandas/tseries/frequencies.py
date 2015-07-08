@@ -32,6 +32,8 @@ class FreqGroup(object):
 
 class Resolution(object):
 
+    # defined in period.pyx
+    # note that these are different from freq codes
     RESO_US = period.US_RESO
     RESO_MS = period.MS_RESO
     RESO_SEC = period.S_RESO
@@ -65,30 +67,104 @@ class Resolution(object):
 
     @classmethod
     def get_str(cls, reso):
+        """
+        Return resolution str against resolution code.
+
+        Example
+        -------
+        >>> Resolution.get_str(Resolution.RESO_SEC)
+        'second'
+        """
         return cls._reso_str_map.get(reso, 'day')
 
     @classmethod
     def get_reso(cls, resostr):
+        """
+        Return resolution str against resolution code.
+
+        Example
+        -------
+        >>> Resolution.get_reso('second')
+        2
+
+        >>> Resolution.get_reso('second') == Resolution.RESO_SEC
+        True
+        """
         return cls._str_reso_map.get(resostr, cls.RESO_DAY)
 
     @classmethod
+    def get_freq_group(cls, resostr):
+        """
+        Return frequency str against resolution str.
+
+        Example
+        -------
+        >>> f.Resolution.get_freq_group('day')
+        4000
+        """
+        return get_freq_group(cls.get_freq(resostr))
+
+    @classmethod
     def get_freq(cls, resostr):
+        """
+        Return frequency str against resolution str.
+
+        Example
+        -------
+        >>> f.Resolution.get_freq('day')
+        'D'
+        """
         return cls._reso_freq_map[resostr]
 
     @classmethod
     def get_str_from_freq(cls, freq):
+        """
+        Return resolution str against frequency str.
+
+        Example
+        -------
+        >>> Resolution.get_str_from_freq('H')
+        'hour'
+        """
         return cls._freq_reso_map.get(freq, 'day')
 
     @classmethod
     def get_reso_from_freq(cls, freq):
+        """
+        Return resolution code against frequency str.
+
+        Example
+        -------
+        >>> Resolution.get_reso_from_freq('H')
+        4
+
+        >>> Resolution.get_reso_from_freq('H') == Resolution.RESO_HR
+        True
+        """
         return cls.get_reso(cls.get_str_from_freq(freq))
 
 
-def get_reso_string(reso):
-    return Resolution.get_str(reso)
-
-
 def get_to_timestamp_base(base):
+    """
+    Return frequency code group used for base of to_timestamp against
+    frequency code.
+
+    Example
+    -------
+    # Return day freq code against longer freq than day
+    >>> get_to_timestamp_base(get_freq_code('D')[0])
+    6000
+    >>> get_to_timestamp_base(get_freq_code('W')[0])
+    6000
+    >>> get_to_timestamp_base(get_freq_code('M')[0])
+    6000
+
+    # Return second freq code against hour between second
+    >>> get_to_timestamp_base(get_freq_code('H')[0])
+    9000
+    >>> get_to_timestamp_base(get_freq_code('S')[0])
+    9000
+    """
     if base < FreqGroup.FR_BUS:
         return FreqGroup.FR_DAY
     if FreqGroup.FR_HR <= base <= FreqGroup.FR_SEC:
@@ -97,6 +173,17 @@ def get_to_timestamp_base(base):
 
 
 def get_freq_group(freq):
+    """
+    Return frequency code group of given frequency str.
+
+    Example
+    -------
+    >>> get_freq_group('W-MON')
+    4000
+
+    >>> get_freq_group('W-FRI')
+    4000
+    """
     if isinstance(freq, compat.string_types):
         base, mult = get_freq_code(freq)
         freq = base
@@ -104,6 +191,18 @@ def get_freq_group(freq):
 
 
 def get_freq(freq):
+    """
+    Return frequency code of given frequency str.
+    If input is not string, return input as it is.
+
+    Example
+    -------
+    >>> get_freq('A')
+    1000
+
+    >>> get_freq('3A')
+    1000
+    """
     if isinstance(freq, compat.string_types):
         base, mult = get_freq_code(freq)
         freq = base
@@ -112,15 +211,29 @@ def get_freq(freq):
 
 def get_freq_code(freqstr):
     """
+    Return freq str or tuple to freq code and stride (mult)
 
     Parameters
     ----------
+    freqstr : str or tuple
 
     Returns
     -------
+    return : tuple of base frequency code and stride (mult)
+
+    Example
+    -------
+    >>> get_freq_code('3D')
+    (6000, 3)
+
+    >>> get_freq_code('D')
+    (6000, 1)
+
+    >>> get_freq_code(('D', 3))
+    (6000, 3)
     """
     if isinstance(freqstr, DateOffset):
-        freqstr = (get_offset_name(freqstr), freqstr.n)
+        freqstr = (freqstr.rule_code, freqstr.n)
 
     if isinstance(freqstr, tuple):
         if (com.is_integer(freqstr[0]) and
@@ -386,6 +499,7 @@ def get_base_alias(freqstr):
     """
     return _base_and_stride(freqstr)[0]
 
+
 _dont_uppercase = set(('MS', 'ms'))
 
 
@@ -637,14 +751,6 @@ def _period_alias_dictionary():
     return alias_dict
 
 
-def _infer_period_group(freqstr):
-    return _period_group(Resolution._reso_freq_map[freqstr])
-
-
-def _period_group(freqstr):
-    base, mult = get_freq_code(freqstr)
-    return base // 1000 * 1000
-
 _period_alias_dict = _period_alias_dictionary()
 
 
@@ -671,11 +777,11 @@ def _period_str_to_code(freqstr):
 def infer_freq(index, warn=True):
     """
     Infer the most likely frequency given the input index. If the frequency is
-    uncertain, a warning will be printed
+    uncertain, a warning will be printed.
 
     Parameters
     ----------
-    index : DatetimeIndex
+    index : DatetimeIndex or TimedeltaIndex
             if passed a Series will use the values of the series (NOT THE INDEX)
     warn : boolean, default True
 
@@ -684,6 +790,7 @@ def infer_freq(index, warn=True):
     freq : string or None
         None if no discernible frequency
         TypeError if the index is not datetime-like
+        ValueError if there are less than three values.
     """
     import pandas as pd
 
@@ -742,7 +849,7 @@ class _FrequencyInferer(object):
     @cache_readonly
     def deltas(self):
         return tslib.unique_deltas(self.values)
-    
+
     @cache_readonly
     def deltas_asi8(self):
         return tslib.unique_deltas(self.index.asi8)
@@ -750,7 +857,7 @@ class _FrequencyInferer(object):
     @cache_readonly
     def is_unique(self):
         return len(self.deltas) == 1
-    
+
     @cache_readonly
     def is_unique_asi8(self):
         return len(self.deltas_asi8) == 1
@@ -763,10 +870,13 @@ class _FrequencyInferer(object):
         if _is_multiple(delta, _ONE_DAY):
             return self._infer_daily_rule()
         else:
-            # Possibly intraday frequency.  Here we use the 
+            # Business hourly, maybe. 17: one day / 65: one weekend
+            if self.hour_deltas in ([1, 17], [1, 65], [1, 17, 65]):
+                return 'BH'
+            # Possibly intraday frequency.  Here we use the
             # original .asi8 values as the modified values
             # will not work around DST transitions.  See #8772
-            if not self.is_unique_asi8:
+            elif not self.is_unique_asi8:
                 return None
             delta = self.deltas_asi8[0]
             if _is_multiple(delta, _ONE_HOUR):
@@ -791,6 +901,10 @@ class _FrequencyInferer(object):
     @cache_readonly
     def day_deltas(self):
         return [x / _ONE_DAY for x in self.deltas]
+
+    @cache_readonly
+    def hour_deltas(self):
+        return [x / _ONE_HOUR for x in self.deltas]
 
     @cache_readonly
     def fields(self):
@@ -927,7 +1041,9 @@ class _FrequencyInferer(object):
             return None
 
         week_of_months = unique((self.index.day - 1) // 7)
-        if len(week_of_months) > 1:
+        # Only attempt to infer up to WOM-4. See #9425
+        week_of_months = week_of_months[week_of_months < 4]
+        if len(week_of_months) == 0 or len(week_of_months) > 1:
             return None
 
         # get which week
@@ -989,7 +1105,7 @@ def is_subperiod(source, target):
         return source in ['D', 'C', 'B', 'M', 'H', 'T', 'S', 'L', 'U', 'N']
     elif _is_quarterly(target):
         return source in ['D', 'C', 'B', 'M', 'H', 'T', 'S', 'L', 'U', 'N']
-    elif target == 'M':
+    elif _is_monthly(target):
         return source in ['D', 'C', 'B', 'H', 'T', 'S', 'L', 'U', 'N']
     elif _is_weekly(target):
         return source in [target, 'D', 'C', 'B', 'H', 'T', 'S', 'L', 'U', 'N']
@@ -1048,7 +1164,7 @@ def is_superperiod(source, target):
         return target in ['D', 'C', 'B', 'M', 'H', 'T', 'S', 'L', 'U', 'N']
     elif _is_quarterly(source):
         return target in ['D', 'C', 'B', 'M', 'H', 'T', 'S', 'L', 'U', 'N']
-    elif source == 'M':
+    elif _is_monthly(source):
         return target in ['D', 'C', 'B', 'H', 'T', 'S', 'L', 'U', 'N']
     elif _is_weekly(source):
         return target in [source, 'D', 'C', 'B', 'H', 'T', 'S', 'L', 'U', 'N']
@@ -1093,7 +1209,12 @@ def _quarter_months_conform(source, target):
 
 def _is_quarterly(rule):
     rule = rule.upper()
-    return rule == 'Q' or rule.startswith('Q-')
+    return rule == 'Q' or rule.startswith('Q-') or rule.startswith('BQ')
+
+
+def _is_monthly(rule):
+    rule = rule.upper()
+    return rule == 'M' or rule == 'BM'
 
 
 def _is_weekly(rule):

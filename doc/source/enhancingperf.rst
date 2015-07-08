@@ -5,17 +5,14 @@
 .. ipython:: python
    :suppress:
 
-   import os
-   import csv
-   from pandas import DataFrame
+   import numpy as np
+   np.random.seed(123456)
+   np.set_printoptions(precision=4, suppress=True)
    import pandas as pd
    pd.options.display.max_rows=15
 
-   import numpy as np
-   np.random.seed(123456)
-   randn = np.random.randn
-   randint = np.random.randint
-   np.set_printoptions(precision=4, suppress=True)
+   import os
+   import csv
 
 
 *********************
@@ -49,7 +46,10 @@ We have a DataFrame to which we want to apply a function row-wise.
 
 .. ipython:: python
 
-   df = DataFrame({'a': randn(1000), 'b': randn(1000),'N': randint(100, 1000, (1000)), 'x': 'x'})
+   df = pd.DataFrame({'a': np.random.randn(1000),
+                      'b': np.random.randn(1000),
+                      'N': np.random.randint(100, 1000, (1000)),
+                      'x': 'x'})
    df
 
 Here's the function in pure python:
@@ -66,11 +66,12 @@ Here's the function in pure python:
            s += f(a + i * dx)
        return s * dx
 
-We achieve our result by by using ``apply`` (row-wise):
+We achieve our result by using ``apply`` (row-wise):
 
-.. ipython:: python
+.. code-block:: python
 
-   %timeit df.apply(lambda x: integrate_f(x['a'], x['b'], x['N']), axis=1)
+   In [7]: %timeit df.apply(lambda x: integrate_f(x['a'], x['b'], x['N']), axis=1)
+   10 loops, best of 3: 174 ms per loop
 
 But clearly this isn't fast enough for us. Let's take a look and see where the
 time is spent during this operation (limited to the most time consuming
@@ -86,14 +87,15 @@ hence we'll concentrate our efforts cythonizing these two functions.
 .. note::
 
   In python 2 replacing the ``range`` with its generator counterpart (``xrange``)
-  would mean the ``range`` line would vanish. In python 3 range is already a generator.
+  would mean the ``range`` line would vanish. In python 3 ``range`` is already a generator.
 
 .. _enhancingperf.plain:
 
 Plain cython
 ~~~~~~~~~~~~
 
-First we're going to need to import the cython magic function to ipython:
+First we're going to need to import the cython magic function to ipython (for
+cython versions >=0.21 you can use ``%load_ext Cython``):
 
 .. ipython:: python
 
@@ -122,9 +124,10 @@ is here to distinguish between function versions):
   to be using bleeding edge ipython for paste to play well with cell magics.
 
 
-.. ipython:: python
+.. code-block:: python
 
-   %timeit df.apply(lambda x: integrate_f_plain(x['a'], x['b'], x['N']), axis=1)
+   In [4]: %timeit df.apply(lambda x: integrate_f_plain(x['a'], x['b'], x['N']), axis=1)
+   10 loops, best of 3: 85.5 ms per loop
 
 Already this has shaved a third off, not too bad for a simple copy and paste.
 
@@ -150,9 +153,10 @@ We get another huge improvement simply by providing type information:
       ...:     return s * dx
       ...:
 
-.. ipython:: python
+.. code-block:: python
 
-   %timeit df.apply(lambda x: integrate_f_typed(x['a'], x['b'], x['N']), axis=1)
+   In [4]: %timeit df.apply(lambda x: integrate_f_typed(x['a'], x['b'], x['N']), axis=1)
+   10 loops, best of 3: 20.3 ms per loop
 
 Now, we're talking! It's now over ten times faster than the original python
 implementation, and we haven't *really* modified the code. Let's have another
@@ -229,9 +233,10 @@ the rows, applying our ``integrate_f_typed``, and putting this in the zeros arra
     Loops like this would be *extremely* slow in python, but in Cython looping
     over numpy arrays is *fast*.
 
-.. ipython:: python
+.. code-block:: python
 
-   %timeit apply_integrate_f(df['a'].values, df['b'].values, df['N'].values)
+   In [4]: %timeit apply_integrate_f(df['a'].values, df['b'].values, df['N'].values)
+   1000 loops, best of 3: 1.25 ms per loop
 
 We've gotten another big improvement. Let's check again where the time is spent:
 
@@ -248,7 +253,7 @@ efforts here.
 More advanced techniques
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-There is still scope for improvement, here's an example of using some more
+There is still hope for improvement. Here's an example of using some more
 advanced cython techniques:
 
 .. ipython::
@@ -278,20 +283,70 @@ advanced cython techniques:
       ...:     return res
       ...:
 
-.. ipython:: python
+.. code-block:: python
 
-   %timeit apply_integrate_f_wrap(df['a'].values, df['b'].values, df['N'].values)
+   In [4]: %timeit apply_integrate_f_wrap(df['a'].values, df['b'].values, df['N'].values)
+   1000 loops, best of 3: 987 us per loop
 
 Even faster, with the caveat that a bug in our cython code (an off-by-one error,
 for example) might cause a segfault because memory access isn't checked.
 
 
-Further topics
-~~~~~~~~~~~~~~
+.. _enhancingperf.numba:
 
-- Loading C modules into cython.
+Using numba
+-----------
 
-Read more in the `cython docs <http://docs.cython.org/>`__.
+A recent alternative to statically compiling cython code, is to use a *dynamic jit-compiler*, ``numba``.
+
+Numba gives you the power to speed up your applications with high performance functions written directly in Python. With a few annotations, array-oriented and math-heavy Python code can be just-in-time compiled to native machine instructions, similar in performance to C, C++ and Fortran, without having to switch languages or Python interpreters.
+
+Numba works by generating optimized machine code using the LLVM compiler infrastructure at import time, runtime, or statically (using the included pycc tool). Numba supports compilation of Python to run on either CPU or GPU hardware, and is designed to integrate with the Python scientific software stack.
+
+.. note::
+
+    You will need to install ``numba``. This is easy with ``conda``, by using: ``conda install numba``, see :ref:`installing using miniconda<install.miniconda>`.
+
+We simply take the plain python code from above and annotate with the ``@jit`` decorator.
+
+.. code-block:: python
+
+    import numba
+
+    @numba.jit
+    def f_plain(x):
+       return x * (x - 1)
+
+    @numba.jit
+    def integrate_f_numba(a, b, N):
+       s = 0
+       dx = (b - a) / N
+       for i in range(N):
+           s += f_plain(a + i * dx)
+       return s * dx
+
+    @numba.jit
+    def apply_integrate_f_numba(col_a, col_b, col_N):
+       n = len(col_N)
+       result = np.empty(n, dtype='float64')
+       assert len(col_a) == len(col_b) == n
+       for i in range(n):
+          result[i] = integrate_f_numba(col_a[i], col_b[i], col_N[i])
+       return result
+
+    def compute_numba(df):
+       result = apply_integrate_f_numba(df['a'].values, df['b'].values, df['N'].values)
+       return pd.Series(result, index=df.index, name='result')
+
+Similar to above, we directly pass ``numpy`` arrays directly to the numba function. Further
+we are wrapping the results to provide a nice interface by passing/returning pandas objects.
+
+.. code-block:: python
+
+    In [4]: %timeit compute_numba(df)
+    1000 loops, best of 3: 798 us per loop
+
+Read more in the `numba docs <http://numba.pydata.org/>`__.
 
 .. _enhancingperf.eval:
 
@@ -373,23 +428,18 @@ This Python syntax is **not** allowed:
 :func:`~pandas.eval` Examples
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:func:`pandas.eval` works well with expressions containing large arrays
+:func:`pandas.eval` works well with expressions containing large arrays.
 
 First let's create a few decent-sized arrays to play with:
 
 .. ipython:: python
 
-   import pandas as pd
-   from pandas import DataFrame, Series
-   from numpy.random import randn
-   import numpy as np
    nrows, ncols = 20000, 100
-   df1, df2, df3, df4 = [DataFrame(randn(nrows, ncols)) for _ in range(4)]
+   df1, df2, df3, df4 = [pd.DataFrame(np.random.randn(nrows, ncols)) for _ in range(4)]
 
 
 Now let's compare adding them together using plain ol' Python versus
 :func:`~pandas.eval`:
-
 
 .. ipython:: python
 
@@ -413,10 +463,9 @@ Now let's do the same thing but with comparisons:
 
 :func:`~pandas.eval` also works with unaligned pandas objects:
 
-
 .. ipython:: python
 
-   s = Series(randn(50))
+   s = pd.Series(np.random.randn(50))
    %timeit df1 + df2 + df3 + df4 + s
 
 .. ipython:: python
@@ -461,7 +510,7 @@ evaluate an expression in the "context" of a :class:`~pandas.DataFrame`.
 
 .. ipython:: python
 
-   df = DataFrame(randn(5, 2), columns=['a', 'b'])
+   df = pd.DataFrame(np.random.randn(5, 2), columns=['a', 'b'])
    df.eval('a + b')
 
 Any expression that is a valid :func:`pandas.eval` expression is also a valid
@@ -476,7 +525,7 @@ it must be a valid Python identifier.
 
 .. ipython:: python
 
-   df = DataFrame(dict(a=range(5), b=range(5, 10)))
+   df = pd.DataFrame(dict(a=range(5), b=range(5, 10)))
    df.eval('c = a + b')
    df.eval('d = a + b + c')
    df.eval('a = 1')
@@ -486,7 +535,7 @@ The equivalent in standard Python would be
 
 .. ipython:: python
 
-   df = DataFrame(dict(a=range(5), b=range(5, 10)))
+   df = pd.DataFrame(dict(a=range(5), b=range(5, 10)))
    df['c'] = df.a + df.b
    df['d'] = df.a + df.b + df.c
    df['a'] = 1
@@ -501,8 +550,8 @@ For example,
 
 .. code-block:: python
 
-   df = DataFrame(randn(5, 2), columns=['a', 'b'])
-   newcol = randn(len(df))
+   df = pd.DataFrame(np.random.randn(5, 2), columns=['a', 'b'])
+   newcol = np.random.randn(len(df))
    df.eval('b + newcol')
 
    UndefinedVariableError: name 'newcol' is not defined
@@ -513,8 +562,8 @@ expression by placing the ``@`` character in front of the name. For example,
 
 .. ipython:: python
 
-   df = DataFrame(randn(5, 2), columns=list('ab'))
-   newcol = randn(len(df))
+   df = pd.DataFrame(np.random.randn(5, 2), columns=list('ab'))
+   newcol = np.random.randn(len(df))
    df.eval('b + @newcol')
    df.query('b < @newcol')
 
@@ -528,7 +577,7 @@ name in an expression.
 
 .. ipython:: python
 
-   a = randn()
+   a = np.random.randn()
    df.query('@a < a')
    df.loc[a < df.a]  # same as the previous expression
 
@@ -656,8 +705,8 @@ you have an expression--for example
 
 .. ipython:: python
 
-   df = DataFrame({'strings': np.repeat(list('cba'), 3),
-                   'nums': np.repeat(range(3), 3)})
+   df = pd.DataFrame({'strings': np.repeat(list('cba'), 3),
+                      'nums': np.repeat(range(3), 3)})
    df
    df.query('strings == "a" and nums == 1')
 

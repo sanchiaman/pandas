@@ -174,13 +174,13 @@ class TestUnique(tm.TestCase):
         arr = np.random.randint(0, 100, size=50)
 
         result = algos.unique(arr)
-        tm.assert_isinstance(result, np.ndarray)
+        tm.assertIsInstance(result, np.ndarray)
 
     def test_objects(self):
         arr = np.random.randint(0, 100, size=50).astype('O')
 
         result = algos.unique(arr)
-        tm.assert_isinstance(result, np.ndarray)
+        tm.assertIsInstance(result, np.ndarray)
 
     def test_object_refcount_bug(self):
         lst = ['A', 'B', 'C', 'D', 'E']
@@ -211,7 +211,7 @@ class TestValueCounts(tm.TestCase):
         arr = np.random.randn(4)
         factor = cut(arr, 4)
 
-        tm.assert_isinstance(factor, Categorical)
+        tm.assertIsInstance(factor, Categorical)
 
         result = algos.value_counts(factor)
         expected = algos.value_counts(np.asarray(factor))
@@ -253,6 +253,37 @@ class TestValueCounts(tm.TestCase):
         exp_dt = pd.Series({pd.Timestamp('2014-01-01 00:00:00'): 1})
         tm.assert_series_equal(algos.value_counts(dt), exp_dt)
         # TODO same for (timedelta)
+
+    def test_dropna(self):
+        # https://github.com/pydata/pandas/issues/9443#issuecomment-73719328
+
+        tm.assert_series_equal(
+            pd.Series([True, True, False]).value_counts(dropna=True),
+            pd.Series([2, 1], index=[True, False]))
+        tm.assert_series_equal(
+            pd.Series([True, True, False]).value_counts(dropna=False),
+            pd.Series([2, 1], index=[True, False]))
+
+        tm.assert_series_equal(
+            pd.Series([True, True, False, None]).value_counts(dropna=True),
+            pd.Series([2, 1], index=[True, False]))
+        tm.assert_series_equal(
+            pd.Series([True, True, False, None]).value_counts(dropna=False),
+            pd.Series([2, 1, 1], index=[True, False, np.nan]))
+
+        tm.assert_series_equal(
+            pd.Series([10.3, 5., 5.]).value_counts(dropna=True),
+            pd.Series([2, 1], index=[5., 10.3]))
+        tm.assert_series_equal(
+            pd.Series([10.3, 5., 5.]).value_counts(dropna=False),
+            pd.Series([2, 1], index=[5., 10.3]))
+
+        tm.assert_series_equal(
+            pd.Series([10.3, 5., 5., None]).value_counts(dropna=True),
+            pd.Series([2, 1], index=[5., 10.3]))
+        tm.assert_series_equal(
+            pd.Series([10.3, 5., 5., None]).value_counts(dropna=False),
+            pd.Series([2, 1, 1], index=[5., 10.3, np.nan]))
 
 def test_quantile():
     s = Series(np.random.randn(100))

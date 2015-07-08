@@ -117,26 +117,26 @@ class TestMultiLevel(tm.TestCase):
         multi = DataFrame(np.random.randn(4, 4),
                           index=[np.array(['a', 'a', 'b', 'b']),
                                  np.array(['x', 'y', 'x', 'y'])])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
         self.assertNotIsInstance(multi.columns, MultiIndex)
 
         multi = DataFrame(np.random.randn(4, 4),
                           columns=[['a', 'a', 'b', 'b'],
                                    ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.columns, MultiIndex)
+        tm.assertIsInstance(multi.columns, MultiIndex)
 
     def test_series_constructor(self):
         multi = Series(1., index=[np.array(['a', 'a', 'b', 'b']),
                                   np.array(['x', 'y', 'x', 'y'])])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
         multi = Series(1., index=[['a', 'a', 'b', 'b'],
                                   ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
         multi = Series(lrange(4), index=[['a', 'a', 'b', 'b'],
                                         ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
     def test_reindex_level(self):
         # axis=0
@@ -149,7 +149,7 @@ class TestMultiLevel(tm.TestCase):
         # Series
         result = month_sums['A'].reindex(self.ymd.index, level=1)
         expected = self.ymd['A'].groupby(level='month').transform(np.sum)
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
 
         # axis=1
         month_sums = self.ymd.T.sum(axis=1, level='month')
@@ -173,6 +173,7 @@ class TestMultiLevel(tm.TestCase):
             broadcasted = self.ymd['A'].groupby(
                 level='month').transform(np.sum)
             expected = op(self.ymd['A'], broadcasted)
+            expected.name = 'A'
             assert_series_equal(result, expected)
 
         _check_op('sub')
@@ -426,8 +427,15 @@ class TestMultiLevel(tm.TestCase):
         # it broadcasts
         df['B', '1'] = [1, 2, 3]
         df['A'] = df['B', '1']
-        assert_series_equal(df['A', '1'], df['B', '1'])
-        assert_series_equal(df['A', '2'], df['B', '1'])
+
+        sliced_a1 = df['A', '1']
+        sliced_a2 = df['A', '2']
+        sliced_b1 = df['B', '1']
+        assert_series_equal(sliced_a1, sliced_b1, check_names=False)
+        assert_series_equal(sliced_a2, sliced_b1, check_names=False)
+        self.assertEqual(sliced_a1.name, ('A', '1'))
+        self.assertEqual(sliced_a2.name, ('A', '2'))
+        self.assertEqual(sliced_b1.name, ('B', '1'))
 
     def test_getitem_tuple_plus_slice(self):
         # GH #671
@@ -461,7 +469,9 @@ class TestMultiLevel(tm.TestCase):
         df = df.set_index(index_columns)
         query_index = df.index[:1]
         rs = df.ix[query_index, "data"]
-        xp = Series(['x'], index=MultiIndex.from_tuples([(0, 1, 0)]))
+
+        xp_idx = MultiIndex.from_tuples([(0, 1, 0)], names=['a', 'b', 'c'])
+        xp = Series(['x'], index=xp_idx, name='data')
         assert_series_equal(rs, xp)
 
     def test_xs(self):
@@ -692,7 +702,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         s = dft['foo', 'two']
         dft['foo', 'two'] = s > s.median()
         assert_series_equal(dft['foo', 'two'], s > s.median())
-        # tm.assert_isinstance(dft._data.blocks[1].items, MultiIndex)
+        # tm.assertIsInstance(dft._data.blocks[1].items, MultiIndex)
 
         reindexed = dft.reindex(columns=[('foo', 'two')])
         assert_series_equal(reindexed['foo', 'two'], s > s.median())
@@ -788,12 +798,12 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         self.assertEqual(len(deleveled.columns), len(self.ymd.columns))
 
         deleveled = self.series.reset_index()
-        tm.assert_isinstance(deleveled, DataFrame)
+        tm.assertIsInstance(deleveled, DataFrame)
         self.assertEqual(len(deleveled.columns),
                          len(self.series.index.levels) + 1)
 
         deleveled = self.series.reset_index(drop=True)
-        tm.assert_isinstance(deleveled, Series)
+        tm.assertIsInstance(deleveled, Series)
 
     def test_sortlevel_by_name(self):
         self.frame.index.names = ['first', 'second']
@@ -865,7 +875,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
     def test_count_level_corner(self):
         s = self.frame['A'][:0]
         result = s.count(level=0)
-        expected = Series(0, index=s.index.levels[0])
+        expected = Series(0, index=s.index.levels[0], name='A')
         assert_series_equal(result, expected)
 
         df = self.frame[:0]
@@ -982,7 +992,9 @@ Thur,Lunch,Yes,51.51,17"""
         df = df.sortlevel(1, axis=1)
 
         stacked = df.stack()
-        assert_series_equal(stacked['foo'], df['foo'].stack())
+        result = df['foo'].stack()
+        assert_series_equal(stacked['foo'], result, check_names=False)
+        self.assertIs(result.name, None)
         self.assertEqual(stacked['bar'].dtype, np.float_)
 
     def test_unstack_bug(self):
@@ -1198,7 +1210,8 @@ Thur,Lunch,Yes,51.51,17"""
 
         applied = grouped.apply(lambda x: x * 2)
         expected = grouped.transform(lambda x: x * 2)
-        assert_series_equal(applied.reindex(expected.index), expected)
+        result = applied.reindex(expected.index)
+        assert_series_equal(result, expected, check_names=False)
 
     def test_unstack_sparse_keyspace(self):
         # memory problems with naive impl #2278
@@ -1312,7 +1325,7 @@ Thur,Lunch,Yes,51.51,17"""
     def test_insert_index(self):
         df = self.ymd[:5].T
         df[2000, 1, 10] = df[2000, 1, 7]
-        tm.assert_isinstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
         self.assertTrue((df[2000, 1, 10] == df[2000, 1, 7]).all())
 
     def test_alignment(self):
@@ -1430,11 +1443,13 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = series.count(level='b')
         expect = self.series.count(level=1)
-        assert_series_equal(result, expect)
+        assert_series_equal(result, expect, check_names=False)
+        self.assertEqual(result.index.name, 'b')
 
         result = series.count(level='a')
         expect = self.series.count(level=0)
-        assert_series_equal(result, expect)
+        assert_series_equal(result, expect, check_names=False)
+        self.assertEqual(result.index.name, 'a')
 
         self.assertRaises(KeyError, series.count, 'x')
         self.assertRaises(KeyError, frame.count, level='x')
@@ -1738,12 +1753,12 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = df['a']
         expected = df['a', '', '']
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
         self.assertEqual(result.name, 'a')
 
         result = df['routine1', 'result1']
         expected = df['routine1', 'result1', '']
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
         self.assertEqual(result.name, ('routine1', 'result1'))
 
     def test_mixed_depth_insert(self):
@@ -1825,7 +1840,7 @@ Thur,Lunch,Yes,51.51,17"""
         df2 = df.copy()
         result = df1.pop('a')
         expected = df2.pop(('a', '', ''))
-        assert_series_equal(expected, result)
+        assert_series_equal(expected, result, check_names=False)
         assert_frame_equal(df1, df2)
         self.assertEqual(result.name, 'a')
 
@@ -1979,7 +1994,7 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = frame.ix[:, 1]
         exp = frame.icol(1)
-        tm.assert_isinstance(result, Series)
+        tm.assertIsInstance(result, Series)
         assert_series_equal(result, exp)
 
     def test_nonunique_assignment_1750(self):

@@ -1,8 +1,9 @@
-dateutil
+python-dateutil
 pytz
 openpyxl
 xlsxwriter
 xlrd
+xlwt
 html5lib
 patsy
 beautiful-soup
@@ -15,5 +16,5 @@ matplotlib
 lxml
 sqlalchemy
 bottleneck
-pymysql
+pymysql==0.6.3
 psycopg2
